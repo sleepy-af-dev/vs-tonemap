@@ -1,0 +1,3 @@
+# Line endings: LF in the repository and in every working copy, whatever the
+# platform's autocrlf setting. Binary detection stays automatic.
+* text=auto eol=lf
