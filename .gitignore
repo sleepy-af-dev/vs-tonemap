@@ -1,0 +1,25 @@
+# local-only material
+.local/
+
+# build output
+build/
+out/
+compile_commands.json
+*.dll
+*.pdb
+*.exp
+*.lib
+*.obj
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.npz
+
+# editor and OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

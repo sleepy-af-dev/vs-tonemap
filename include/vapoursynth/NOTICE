@@ -1,0 +1,15 @@
+Vendored VapourSynth API headers
+
+Source:  https://github.com/vapoursynth/vapoursynth, tag R79, directory include/
+Fetched: 2026-09-12, files unmodified.
+
+File             Licence      SHA-256
+VapourSynth4.h   LGPL-2.1+    62ca1cca248ee89d6f8a79c8f4172ccebca1ed6b69626c8d231d1be5df4ccecc
+VSHelper4.h      WTFPL-2      a648bc2123e17365548be83070a6f1363994ccef54433d3848aa84f15c419892
+VSConstants4.h   LGPL-2.1+    fd97affaa6b89c540b1ec882cd4ac56b5000ecf0524c0b23258d0e4e4e6117d5
+
+Copyright (c) Fredrik Mellbin. Each file carries its own licence notice in
+its header comment; those notices govern the files.
+
+These headers describe the plugin interface of VapourSynth. This plugin is
+loaded by VapourSynth at run time and includes no other part of it.
