@@ -1,0 +1,12 @@
+# ruff's own default width, stated so a checkout formats the same way
+# everywhere. bench/ has no pyproject.toml, so the config lives here to
+# cover both directories.
+line-length = 88
+# The oracle modules and the harness are first-party, so their imports
+# group together rather than among the installed packages.
+src = ["reference", "reference/tests", "bench"]
+
+[lint]
+# ruff's documented defaults plus import sorting, stated so the rule set
+# does not move with the ruff version. Line length is the formatter's job.
+select = ["E4", "E7", "E9", "F", "I"]
