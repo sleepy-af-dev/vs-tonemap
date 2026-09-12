@@ -51,10 +51,17 @@ exists so the choice of double rests on a measurement.
 - ratio: 1.32x
 
 Against the float64 oracle the float kernel reaches 2.5e-04
-absolute and 5.9% relative, against frozen gates of 1.2e-07 for
-both. In output codes that is at worst 5 of 255 with 2.3% of
-samples moving by more than one, and at worst 20 of 1023 with 4.5%
-moving by more than one. The ICtCp matrices subtract numbers of
+absolute and 9.9% relative, against frozen gates of 1.2e-07 for
+both, measured over the tone fixtures against the oracle re-run
+on the float32 the clip carries, so it is the kernel's own
+arithmetic.
+
+Encoded for an SDR display as
+round(clip(v, 0, 1) ** (1 / 2.4) * (levels - 1)), the largest
+difference is 5 codes of 255 and 22 of 1023. More than one code
+of movement reaches 1.1% of channel values and 3.2% of pixels at
+8 bits, and 3.0% and 7.9% at 10 bits; a pixel counts when any of
+its three channels moves. The ICtCp matrices subtract numbers of
 similar size, so this path loses far more to float32 than a bare
 PQ round trip does.
 

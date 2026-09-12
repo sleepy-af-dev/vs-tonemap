@@ -17,6 +17,7 @@ compile_commands.json
 __pycache__/
 *.pyc
 .pytest_cache/
+.cache/
 *.npz
 
 # editor and OS
