@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import vapoursynth as vs
-from bt2390_ref import bt2390
+from bt2390_ref import REPRESENTATIONS, bt2390
 from fixtures import build
 
 # Two gates, because the fixture inputs are float64 and a clip can only carry
@@ -23,10 +23,13 @@ from fixtures import build
 ABSOLUTE_GATE = 1e-6
 RELATIVE_GATE = 1e-5
 # The filter gate is the same comparison with the oracle re-run on the float32
-# the clip carries, so it measures only the arithmetic. Frozen after Phase 2
-# at twice the measured maximum, which was 4.75e-07 and 5.94e-08.
-FILTER_ABSOLUTE_GATE = 9.5e-7
+# the clip carries, so it measures only the arithmetic. Both numbers are one
+# float32 ULP. The absolute bound applies only at or below SDR white, because
+# above that a half-ULP of the float32 store is itself larger than 1e-6:
+# ycbcr reaches 32.6 times SDR white on these fixtures.
+FILTER_ABSOLUTE_GATE = 1.2e-7
 FILTER_RELATIVE_GATE = 1.2e-7
+ABSOLUTE_CEILING = 1.0
 RELATIVE_FLOOR = 1e-3
 
 PLUGIN = Path(__file__).resolve().parents[2] / "build" / "tonemapper.dll"
@@ -73,10 +76,18 @@ def run(clip):
 
 
 def error_stats(got, expected):
-    absolute = np.abs(got - expected)
+    """Absolute error at or below SDR white, relative error above the floor.
+
+    The two cover different parts of the range. Scoping the absolute one is
+    what keeps it meaningful: the output is stored as float32, whose half-ULP
+    at value v is v times 2^-24, so an absolute bound of 1e-6 is unreachable
+    above v = 16.8 whatever the arithmetic does.
+    """
+    error = np.abs(got - expected)
+    absolute = np.where(np.abs(expected) <= ABSOLUTE_CEILING, error, 0.0)
     big = np.abs(expected) > RELATIVE_FLOOR
-    relative = np.zeros_like(absolute)
-    relative[big] = absolute[big] / np.abs(expected[big])
+    relative = np.zeros_like(error)
+    relative[big] = error[big] / np.abs(expected[big])
     return absolute, relative
 
 
@@ -120,10 +131,7 @@ def filter_args(params, representation):
     )
 
 
-IMPLEMENTED = ("ictcp",)
-
-
-@pytest.mark.parametrize("representation", IMPLEMENTED)
+@pytest.mark.parametrize("representation", REPRESENTATIONS)
 def test_every_case_meets_the_accuracy_gate(
     plugin, fixtures, representation, record_property
 ):
@@ -239,6 +247,9 @@ def test_the_source_range_can_come_from_the_frame_properties(plugin, fixtures):
 def test_an_argument_overrides_the_property(plugin, fixtures):
     _, arrays = fixtures
     rows = arrays["tm/maxcll_737/in"]
+    # MASTERED says 1000 and 0.0001. Both arguments differ from the property,
+    # so a filter that quietly preferred the property would fail here.
+    assert MASTERED["MasteringDisplayMaxLuminance"] != 737.0
     got, _ = run(plugin.BT2390(make_clip(rows, MASTERED), src_max=737.0, src_min=0.0001))
     absolute, _ = error_stats(got, arrays["tm/maxcll_737/ictcp"])
     assert absolute.max() <= ABSOLUTE_GATE
@@ -253,6 +264,8 @@ def test_output_properties(plugin):
         MasteringDisplayPrimariesY=[0.320, 0.690, 0.060],
         MasteringDisplayWhitePointX=0.3127,
         MasteringDisplayWhitePointY=0.3290,
+        DolbyVisionRPU=b"rpu payload bytes",
+        HDR10Plus=b"hdr10plus payload bytes",
     )
     _, props = run(plugin.BT2390(make_clip(np.full((4, 3), 0.5), stale)))
 
@@ -282,10 +295,24 @@ def evaluate(clip):
     clip.get_frame(0)
 
 
-def test_a_non_rgbs_clip_is_rejected(plugin):
-    yuv = core.std.BlankClip(format=vs.YUV420P10, width=8, height=8, length=1)
+@pytest.mark.parametrize(
+    "clip_format", [vs.YUV420P10, vs.RGB24, vs.RGBH, vs.GRAYS], ids=str
+)
+def test_a_clip_of_the_wrong_format_is_rejected(plugin, clip_format):
+    """RGB24 and RGBH are the near misses: right family, wrong sample type."""
+    wrong = core.std.BlankClip(format=clip_format, width=8, height=8, length=1)
     with pytest.raises(vs.Error, match="RGBS"):
-        plugin.BT2390(yuv, src_min=0.0, src_max=1000.0)
+        plugin.BT2390(wrong, src_min=0.0, src_max=1000.0)
+
+
+def test_a_variable_format_clip_is_rejected(plugin):
+    """Constant format is part of the contract; splicing two formats breaks it."""
+    a = core.std.BlankClip(format=vs.RGBS, width=8, height=8, length=1)
+    b = core.std.BlankClip(format=vs.RGB24, width=8, height=8, length=1)
+    variable = core.std.Splice([a, b], mismatch=True)
+    assert variable.format.id == 0  # the binding reports UNDEFINED, not None
+    with pytest.raises(vs.Error, match="RGBS"):
+        plugin.BT2390(variable, src_min=0.0, src_max=1000.0)
 
 
 def test_missing_mastering_metadata_is_an_error(plugin):
@@ -334,9 +361,6 @@ def test_a_zero_mastering_black_is_valid(plugin):
         ({"_Transfer": 16}, "_Transfer"),  # PQ rather than linear
         ({"_Primaries": 1}, "_Primaries"),  # BT.709 rather than BT.2020
         ({"_Range": 0}, "_Range"),  # limited rather than full
-        # The deprecated spelling, which the core rewrites into _Range with the
-        # value inverted, so the filter sees and reports the current one.
-        ({"_ColorRange": 1}, "_Range"),
     ],
 )
 def test_a_contradicting_tag_is_an_error(plugin, props, expected):
@@ -345,11 +369,41 @@ def test_a_contradicting_tag_is_an_error(plugin, props, expected):
         evaluate(plugin.BT2390(clip, src_min=0.0, src_max=1000.0))
 
 
+@pytest.mark.filterwarnings("ignore:The _ColorRange frame property")
+def test_the_deprecated_range_spelling_is_still_caught(plugin):
+    """The core rewrites it into _Range and inverts the value on the way."""
+    clip = make_clip(np.full((4, 3), 0.5), {"_ColorRange": 1})
+    with pytest.raises(vs.Error, match="full range"):
+        evaluate(plugin.BT2390(clip, src_min=0.0, src_max=1000.0))
+
+
+@pytest.mark.parametrize("key", ["_Transfer", "_Primaries", "_Range"])
+def test_a_tag_of_the_wrong_type_is_an_error(plugin, key):
+    """Present but unreadable is a mistake, not an absent tag."""
+    clip = make_clip(np.full((4, 3), 0.5), {key: "linear"})
+    with pytest.raises(vs.Error, match=f"{key} is not an integer property"):
+        evaluate(plugin.BT2390(clip, src_min=0.0, src_max=1000.0))
+
+
+def test_a_mastering_luminance_written_as_an_integer_is_read(plugin):
+    """SetFrameProps turns a whole number into an integer property."""
+    clip = make_clip(
+        np.full((4, 3), 0.5),
+        dict(
+            case_props(None),
+            MasteringDisplayMinLuminance=0,
+            MasteringDisplayMaxLuminance=1000,
+        ),
+    )
+    evaluate(plugin.BT2390(clip))
+
+
 def test_absent_tags_are_accepted(plugin):
     """Consistency is demanded, tagging is not."""
     evaluate(plugin.BT2390(make_clip(np.full((4, 3), 0.5)), src_min=0.0, src_max=1000.0))
 
 
+@pytest.mark.filterwarnings("ignore:The _ColorRange frame property")
 def test_the_pre_r74_range_key_cannot_be_reached_from_here():
     """The _ColorRange fallback in the filter is untestable on this core.
 
@@ -379,15 +433,47 @@ def test_the_pre_r74_range_key_cannot_be_reached_from_here():
     "kwargs,expected",
     [
         (dict(src_min=0.0, src_max=0.0), "src_max must be a positive luminance"),
-        (dict(src_min=1000.0, src_max=1000.0), "src_min must be below src_max"),
-        (dict(src_min=2000.0, src_max=1000.0), "src_min must be below src_max"),
+        (dict(src_min=1000.0, src_max=1000.0), "must be below"),
+        (dict(src_min=2000.0, src_max=1000.0), "must be below"),
         (dict(src_min=0.0, src_max=1000.0, dst_min=300.0), "dst_min must be below"),
         (dict(src_min=0.0, src_max=1000.0, dst_min=50.0), "monotone"),
         (dict(src_min=0.0, src_max=1000.0, dst_max=3.0), "KS"),
         (dict(src_min=0.0, src_max=20000.0), "0 to 10000"),
         (dict(src_min=-1.0, src_max=1000.0), "0 to 10000"),
         (dict(src_min=0.0, src_max=1000.0, nominal_luminance=0.0), "nominal_luminance"),
+        (
+            dict(src_min=0.0, src_max=1000.0, nominal_luminance=-100.0),
+            "nominal_luminance",
+        ),
+        (
+            dict(src_min=0.0, src_max=1000.0, nominal_luminance=float("nan")),
+            "nominal_luminance",
+        ),
+        (
+            dict(src_min=0.0, src_max=1000.0, nominal_luminance=float("inf")),
+            "nominal_luminance",
+        ),
         (dict(src_min=0.0, src_max=1000.0, representation="oklab"), "representation"),
+        # dst_max and dst_min need no source range to be checkable, so they
+        # have to fail even when src_min and src_max are left to a property.
+        (dict(dst_max=0.0), "dst_max must be a positive luminance"),
+        (dict(dst_max=-5.0), "0 to 10000"),
+        (dict(dst_max=20000.0), "0 to 10000"),
+        (dict(dst_min=-1.0), "0 to 10000"),
+        (dict(dst_min=20000.0), "0 to 10000"),
+        (dict(dst_min=float("nan")), "0 to 10000"),
+        (dict(dst_max=float("nan")), "0 to 10000"),
+        (dict(dst_max=float("inf")), "0 to 10000"),
+        # Two distinct doubles that encode to the same PQ code.
+        (
+            dict(
+                src_min=0.0,
+                src_max=1000.0,
+                dst_min=np.nextafter(203.0, 0.0),
+                dst_max=203.0,
+            ),
+            "no width",
+        ),
     ],
 )
 def test_parameter_errors_are_caught_at_script_time(plugin, kwargs, expected):
@@ -397,18 +483,35 @@ def test_parameter_errors_are_caught_at_script_time(plugin, kwargs, expected):
         plugin.BT2390(clip, **kwargs)
 
 
-def test_a_bad_property_derived_range_fails_per_frame(plugin):
-    """The same checks run again once the properties supply the numbers."""
+@pytest.mark.parametrize(
+    "mastering,kwargs,expected",
+    [
+        # Ordering, which only becomes checkable once the pair is complete.
+        ((500.0, 100.0), {}, "MasteringDisplayMinLuminance"),
+        # minLum above 0.25 and KS below 0, both driven by the property peak
+        # rather than by an argument.
+        ((0.0, 10.0), dict(dst_min=5.0), "monotone"),
+        ((0.0, 10000.0), dict(dst_max=10.0), "KS"),
+        # A peak that encodes to the same PQ code as the black.
+        ((203.0, float(np.nextafter(203.0, 1e4))), {}, "no width"),
+    ],
+)
+def test_property_derived_failures_name_the_property(plugin, mastering, kwargs, expected):
+    """The checks that need a property run per frame and report its name."""
+    low, high = mastering
     clip = make_clip(
         np.full((4, 3), 0.5),
         dict(
             case_props(None),
-            MasteringDisplayMinLuminance=500.0,
-            MasteringDisplayMaxLuminance=100.0,
+            MasteringDisplayMinLuminance=low,
+            MasteringDisplayMaxLuminance=high,
         ),
     )
-    with pytest.raises(vs.Error, match="src_min must be below src_max"):
-        evaluate(plugin.BT2390(clip))
+    with pytest.raises(vs.Error, match=expected) as raised:
+        evaluate(plugin.BT2390(clip, **kwargs))
+    # Never under the name of an argument the caller did not pass.
+    assert "src_min (" not in str(raised.value)
+    assert "src_max (" not in str(raised.value)
 
 
 def test_the_documented_script_runs(plugin):

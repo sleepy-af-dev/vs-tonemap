@@ -11,6 +11,10 @@ namespace tonemapper {
 
 enum class Representation {
     Ictcp,
+    Ycbcr,
+    Yrgb,
+    Rgb,
+    Maxrgb,
 };
 
 // Names the plugin accepts, in the order the error message lists them. Only

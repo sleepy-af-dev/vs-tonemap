@@ -96,6 +96,17 @@ inline constexpr Mat3 kRgb2020ToLms = {{
 }};
 inline constexpr Mat3 kLmsToRgb2020 = inverse(kRgb2020ToLms);
 
+// Annex 5 and BT.2100 Table 6 print these three luminance coefficients. They
+// are signal coefficients rather than CIE luminance, so yrgb and ycbcr use
+// them exactly as printed; the exact BT.2020 row differs by up to 2.9e-5
+// relative on blue, which is above float32 tolerance. The gamut mapper, where
+// Y really is luminance, uses the exact row instead.
+inline constexpr double kKr = 0.2627;
+inline constexpr double kKg = 0.6780;
+inline constexpr double kKb = 0.0593;
+inline constexpr double kCbDivisor = 2.0 * (1.0 - kKb);  // 1.8814
+inline constexpr double kCrDivisor = 2.0 * (1.0 - kKr);  // 1.4746
+
 inline constexpr Mat3 kLmspToIctcp = {{
     {2048.0 / 4096.0, 2048.0 / 4096.0, 0.0},
     {6610.0 / 4096.0, -13613.0 / 4096.0, 7003.0 / 4096.0},
@@ -144,9 +155,16 @@ struct Eetf {
 
 // Fills out and returns an empty string, or leaves it alone and returns the
 // reason the four luminances cannot define a curve. No exceptions cross the
-// VapourSynth C boundary.
+// VapourSynth C boundary. minName and maxName are what the message calls the
+// source pair, so a value that came from a frame property is reported under
+// the property's name rather than under the argument it stood in for.
 std::string makeEetf(double srcMin, double srcMax, double dstMin, double dstMax,
-                     Eetf* out);
+                     const char* minName, const char* maxName, Eetf* out);
+
+// The checks whose inputs are all arguments, so they can run at create time
+// and fail the script at evaluation rather than at the first frame.
+std::string checkLuminance(const char* name, double value);
+std::string checkTargetRange(double dstMin, double dstMax);
 
 // min(v1/v2, v2/v1), taken as 1 when either value is zero.
 template <typename T>
