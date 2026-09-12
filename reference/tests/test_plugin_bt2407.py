@@ -221,6 +221,36 @@ def test_the_standard_primaries_are_accepted(plugin):
         assert out["TonemapSourceGamut"] == "mastering"
 
 
+def test_a_white_point_outside_the_triangle_is_rejected(plugin):
+    """Inside the CIE diagram but outside the primaries it declares.
+
+    The other white point case in this file is outside the diagram, which a
+    different check catches first, so the containment test was never reached.
+    """
+    # x + y is 0.2, so this white is inside the diagram, and it sits well
+    # outside P3's blue edge, which at y = 0.1 is at x = 0.157.
+    props = dict(
+        MASTERING_P3, MasteringDisplayWhitePointX=0.1, MasteringDisplayWhitePointY=0.1
+    )
+    clip = make_clip(np.full((4, 3), 0.5), dict(LINEAR_BT2020, **props))
+    _, out = run(plugin.BT2407(clip, src_gamut="auto"))
+    assert out["TonemapSourceGamut"] == "bt2020"
+
+
+@pytest.mark.parametrize("excess,label", [(5e-10, "mastering"), (2e-9, "bt2020")])
+def test_the_margin_on_the_diagram_edge(plugin, excess, label):
+    """x + y <= 1 + 1e-9: inside the margin is accepted, past it is not.
+
+    The margin is there for a source filter whose red arrives a ULP above the
+    line, which BT.2020 and P3 red both sit exactly on.
+    """
+    props = dict(MASTERING_P3)
+    props["MasteringDisplayPrimariesX"] = [0.680 + excess, 0.265, 0.150]
+    clip = make_clip(np.full((4, 3), 0.5), dict(LINEAR_BT2020, **props))
+    _, out = run(plugin.BT2407(clip, src_gamut="auto"))
+    assert out["TonemapSourceGamut"] == label
+
+
 # --- Properties and errors -------------------------------------------------
 
 
