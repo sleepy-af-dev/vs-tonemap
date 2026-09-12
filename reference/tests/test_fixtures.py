@@ -1,7 +1,7 @@
-"""The generated fixture archive.
+"""The generated fixture set.
 
-Phase 2 onward measures the plugin against these arrays, so the archive needs
-checking in its own right: that it builds, that its shapes line up, and that
+Phase 2 onward measures the plugin against these arrays, so they need
+checking in their own right: that they build, that shapes line up, and that
 the inputs really do contain the cases they are meant to cover.
 """
 
@@ -15,7 +15,7 @@ from bt2390_ref import (
     pq_eotf,
     pq_inverse_eotf,
 )
-from bt2407_ref import clip
+from bt2407_ref import clip, xyz_to_uv
 from fixtures import build
 
 
@@ -37,20 +37,42 @@ def test_every_case_has_an_input_and_an_output(archive):
         assert arrays[f"gm/{name}/out"].shape == rows.shape
 
 
-def test_nothing_in_the_archive_is_nan(archive):
+def test_nothing_in_the_fixtures_is_nan(archive):
     _, arrays = archive
     for key, value in arrays.items():
         assert np.all(np.isfinite(value)), key
 
 
+def test_every_case_carries_the_input_scale_it_was_built_with(archive):
+    """The same physical colours, divided by whatever 1.0 means for that case."""
+    meta, arrays = archive
+    reference = arrays["tm/default/in"] * meta["tone"]["default"]["nominal_luminance"]
+    for name, params in meta["tone"].items():
+        cd = arrays[f"tm/{name}/in"] * params["nominal_luminance"]
+        assert np.allclose(cd, reference, rtol=1e-12, atol=0.0), name
+    assert meta["tone"]["nominal_203"]["nominal_luminance"] == 203.0
+    assert not np.array_equal(arrays["tm/nominal_203/in"], arrays["tm/default/in"])
+
+
 def test_the_tone_input_spans_the_cases_it_claims(archive):
-    _, arrays = archive
-    cd = arrays["tm/default/in"] * 100.0
+    meta, arrays = archive
+    cd = arrays["tm/default/in"] * meta["tone"]["default"]["nominal_luminance"]
     assert cd.min() < 0.0  # negatives
     assert (cd == 0.0).all(axis=-1).any()  # black
     assert cd.max() >= 10000.0  # above LW
     assert np.any(np.abs(cd - 203.0) < 1e-9)  # SDR white
-    assert np.any(np.abs(cd - 87.836267395426) < 1e-9)  # the knee
+
+
+def test_every_parameter_set_has_a_sample_on_its_own_knee(archive):
+    """Taken from the curve, so a change to the curve moves the sample with it."""
+    meta, arrays = archive
+    for name, params in meta["tone"].items():
+        curve = Eetf(
+            params["src_min"], params["src_max"], params["dst_min"], params["dst_max"]
+        )
+        cd = arrays[f"tm/{name}/in"] * params["nominal_luminance"]
+        grey = cd[(cd[:, 0] == cd[:, 1]) & (cd[:, 1] == cd[:, 2])][:, 0]
+        assert np.any(np.abs(grey - curve.knee_luminance()) < 1e-9), name
 
 
 def test_a_gamut_input_has_no_usable_chromaticity(archive):
@@ -58,13 +80,23 @@ def test_a_gamut_input_has_no_usable_chromaticity(archive):
     _, arrays = archive
     rows = arrays["gm/softclip_bt2020/in"]
     xyz = apply_matrix(RGB2020_TO_XYZ, rows)
-    denom = xyz[..., 0] + 15.0 * xyz[..., 1] + 3.0 * xyz[..., 2]
-    undefined = (denom <= 0.0) & (xyz[..., 1] > 0.0)
+    _, _, denom = xyz_to_uv(xyz)
+    y = xyz[..., 1]
+    undefined = denom <= 0.0
 
-    assert undefined.sum() >= 1
-    assert np.array_equal(
-        arrays["gm/softclip_bt2020/out"][undefined], clip(rows[undefined])
-    )
+    assert (undefined & (y > 0.0)).sum() >= 2
+    out = arrays["gm/softclip_bt2020/out"]
+
+    # The policy order, pinned by fixture as well as by unit test: the two
+    # luminance rules first, the denominator guard only for what is left.
+    high = undefined & (y >= 1.0)
+    low = undefined & (y <= 0.0)
+    assert high.sum() >= 1 and low.sum() >= 1
+    assert np.all(out[high] == 1.0)
+    assert np.all(out[low] == 0.0)
+    middle = undefined & (y > 0.0) & (y < 1.0)
+    assert middle.sum() >= 1
+    assert np.array_equal(out[middle], clip(rows[middle]))
 
 
 def test_a_tone_case_lifts_the_black_above_the_mastering_black(archive):

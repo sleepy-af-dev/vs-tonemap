@@ -29,6 +29,11 @@ RGB2020_TO_RGB709 = XYZ_TO_RGB709 @ RGB2020_TO_XYZ
 METHODS = ("clip", "softclip")
 SRC_GAMUTS = ("auto", "bt2020", "p3d65")
 
+# How far outside the CIE diagram a declared primary may land and still be
+# accepted. Container metadata arrives as counts of 0.00002 and the standard
+# primaries sit exactly on x + y = 1, so the last bit is not worth a rejection.
+CHROMATICITY_TOLERANCE = 1e-9
+
 
 def xy_to_uv(x, y):
     """CIE 1931 xy to CIE 1976 u'v'."""
@@ -37,6 +42,25 @@ def xy_to_uv(x, y):
 
 
 WHITE_UV = xy_to_uv(*D65)
+
+
+def xyz_to_uv(xyz):
+    """CIE 1976 u'v' of an XYZ triple, with the denominator the caller needs.
+
+    The denominator comes back because a non-positive one means there is no
+    chromaticity to speak of, and only the caller knows what to do about it.
+    """
+    denom = xyz[..., 0] + 15.0 * xyz[..., 1] + 3.0 * xyz[..., 2]
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return 4.0 * xyz[..., 0] / denom, 9.0 * xyz[..., 1] / denom, denom
+
+
+def uv_to_xyz(y, u, v):
+    """XYZ from a luminance and a CIE 1976 chromaticity."""
+    return np.stack(
+        [9.0 * y * u / (4.0 * v), y, y * (12.0 - 3.0 * u - 20.0 * v) / (4.0 * v)],
+        axis=-1,
+    )
 
 
 def clip(rgb):
@@ -60,10 +84,13 @@ def valid_gamut(primaries, white):
     triangle with a non-zero area, and the white point has to lie strictly
     inside that triangle. Anything else counts as absent metadata.
 
-    The bound on x + y is inclusive because BT.2020's red primary
-    (0.708, 0.292) and P3's (0.680, 0.320) both sit exactly on z = 0. An
-    exclusive bound rejects the two most common mastering gamuts there are.
-    y stays strictly positive because rgb_to_xyz_matrix divides by it.
+    The bound on x + y is inclusive, with a margin, because BT.2020's red
+    primary (0.708, 0.292) and P3's (0.680, 0.320) both sit exactly on
+    z = 0. A strict bound rejects the two most common mastering gamuts there
+    are, and an exact one is at the mercy of however a source filter
+    arrived at the number. A primary 1e-9 outside the diagram does the
+    derivation no harm. y stays strictly positive because rgb_to_xyz_matrix
+    divides by it.
     """
     pts = np.asarray(primaries, dtype=np.float64)
     w = np.asarray(white, dtype=np.float64)
@@ -72,7 +99,7 @@ def valid_gamut(primaries, white):
     if not (np.all(np.isfinite(pts)) and np.all(np.isfinite(w))):
         return False
     for x, y in np.vstack([pts, w[None, :]]):
-        if not (x >= 0.0 and y > 0.0 and x + y <= 1.0):
+        if not (x >= 0.0 and y > 0.0 and x + y <= 1.0 + CHROMATICITY_TOLERANCE):
             return False
     orientation = np.sign(_signed_area(pts))
     if orientation == 0.0:
@@ -92,20 +119,24 @@ def mastering_gamut(props):
     and MasteringDisplayPrimariesY as three each in R, G, B order, and
     MasteringDisplayWhitePointX and MasteringDisplayWhitePointY as one each.
     Anything missing or failing validation returns None.
+
+    The white point is read through the same array path as the primaries.
+    VapourSynth returns a bare float for a one-element property in some
+    bindings and a one-element sequence in others, and a reader that only
+    accepts the scalar quietly discards usable metadata.
     """
     if not props:
         return None
     try:
         xs = np.asarray(props["MasteringDisplayPrimariesX"], dtype=np.float64)
         ys = np.asarray(props["MasteringDisplayPrimariesY"], dtype=np.float64)
-        white = (
-            float(props["MasteringDisplayWhitePointX"]),
-            float(props["MasteringDisplayWhitePointY"]),
-        )
+        wx = np.asarray(props["MasteringDisplayWhitePointX"], dtype=np.float64)
+        wy = np.asarray(props["MasteringDisplayWhitePointY"], dtype=np.float64)
     except (KeyError, TypeError, ValueError):
         return None
-    if xs.shape != (3,) or ys.shape != (3,):
+    if xs.shape != (3,) or ys.shape != (3,) or wx.size != 1 or wy.size != 1:
         return None
+    white = (float(wx.reshape(-1)[0]), float(wy.reshape(-1)[0]))
     primaries = tuple(zip(xs.tolist(), ys.tolist()))
     if not valid_gamut(primaries, white):
         return None
@@ -115,21 +146,25 @@ def mastering_gamut(props):
 def resolve_source_gamut(src_gamut="auto", props=None):
     """Pick the source gamut for the soft clip.
 
-    Returns (primaries, white, label), where the label is what the plugin
-    records in the TonemapSourceGamut frame property.
+    Returns (primaries, label), where the label is what the plugin records in
+    the TonemapSourceGamut frame property. The declared white point never
+    comes back, because the source matrix is always derived with D65: see
+    softclip.
     """
     if src_gamut not in SRC_GAMUTS:
         raise ValueError(
             f"src_gamut must be one of {', '.join(SRC_GAMUTS)}, got {src_gamut!r}"
         )
     if src_gamut == "bt2020":
-        return PRIMARIES_BT2020, D65, "bt2020"
+        return PRIMARIES_BT2020, "bt2020"
     if src_gamut == "p3d65":
-        return PRIMARIES_P3D65, D65, "p3d65"
+        return PRIMARIES_P3D65, "p3d65"
     found = mastering_gamut(props)
     if found is None:
-        return PRIMARIES_BT2020, D65, "bt2020"
-    return found[0], found[1], "mastering"
+        return PRIMARIES_BT2020, "bt2020"
+    # Only the primaries are used. The declared white point was validated as
+    # part of accepting the metadata and is deliberately discarded here.
+    return found[0], "mastering"
 
 
 # --- Annex 5 projection ----------------------------------------------------
@@ -196,27 +231,36 @@ def soft_clip(r, alpha, beta):
     return np.where(roll, r - alpha * s * s, np.where(r > 1.0 + alpha, 1.0, r))
 
 
-def softclip(rgb, beta=0.2, src_primaries=PRIMARIES_BT2020, src_white=D65):
-    """BT.2407 Annex 5: luminance-preserving projection with a reversible roll-off."""
+def softclip(rgb, beta=0.2, src_primaries=PRIMARIES_BT2020, clamp=True):
+    """BT.2407 Annex 5: luminance-preserving projection with a reversible roll-off.
+
+    clamp=False returns the raw projection, before the input policies and the
+    final clamp to the unit cube. That clamp should never do anything for a
+    pixel the projection handled, and the only way to check it is a no-op is
+    to look at the value underneath it.
+
+    The source matrix is derived with D65, whatever white the mastering
+    metadata declares, because the projection white is D65 at both ends of
+    the chain. Deriving with a declared non-D65 white would put D65 outside
+    the source cube, and above roughly Y = 0.85 the source boundary would
+    fall inside the BT.709 one, clamping alpha to zero and turning the
+    roll-off into a hard clip along luminance.
+    """
     rgb = np.asarray(rgb, dtype=np.float64)
-    xyz_to_src = np.linalg.inv(rgb_to_xyz_matrix(src_primaries, src_white))
+    xyz_to_src = np.linalg.inv(rgb_to_xyz_matrix(src_primaries, D65))
     uw, vw = WHITE_UV
 
     xyz = apply_matrix(RGB2020_TO_XYZ, rgb)
     y = xyz[..., 1]
-    denom = xyz[..., 0] + 15.0 * xyz[..., 1] + 3.0 * xyz[..., 2]
+    u, v, denom = xyz_to_uv(xyz)
 
     # A colour with a non-positive denominator has no chromaticity to project
-    # along, which only a negative input channel can produce. Those pixels
-    # take the hard clip, the one mapping that is defined everywhere.
-    projectable = (y > 0.0) & (y < 1.0) & (denom > 0.0)
-    safe_denom = np.where(projectable, denom, 1.0)
+    # along, which only a negative input channel can produce.
+    has_chroma = denom > 0.0
+    projectable = (y > 0.0) & (y < 1.0) & has_chroma
     safe_y = np.where(projectable, y, 0.5)
-
-    u = np.where(projectable, 4.0 * xyz[..., 0] / safe_denom, uw)
-    v = np.where(projectable, 9.0 * xyz[..., 1] / safe_denom, vw)
-    du = u - uw
-    dv = v - vw
+    du = np.where(projectable, u, uw) - uw
+    dv = np.where(projectable, v, vw) - vw
 
     t_src = boundary_t(xyz_to_src, safe_y, du, dv)
     t_709 = boundary_t(XYZ_TO_RGB709, safe_y, du, dv)
@@ -232,20 +276,29 @@ def softclip(rgb, beta=0.2, src_primaries=PRIMARIES_BT2020, src_white=D65):
     with np.errstate(invalid="ignore"):
         scale = np.where(r <= 1.0 - beta, 1.0, t_709 * soft_clip(r, alpha, beta))
 
-    u2 = uw + du * scale
-    v2 = vw + dv * scale
-    x2 = 9.0 * safe_y * u2 / (4.0 * v2)
-    z2 = safe_y * (12.0 - 3.0 * u2 - 20.0 * v2) / (4.0 * v2)
-    out = np.clip(
-        apply_matrix(XYZ_TO_RGB709, np.stack([x2, safe_y, z2], axis=-1)), 0.0, 1.0
+    projected = apply_matrix(
+        XYZ_TO_RGB709, uv_to_xyz(safe_y, uw + du * scale, vw + dv * scale)
     )
+    if not clamp:
+        return projected
 
-    # Y at or above the target peak is white: the effective gamut shrinks to
-    # the white point as Y approaches 1 and the projection already converges
-    # there, so this is the method's own limit. Y at or below 0 is black.
-    out = np.where(projectable[..., None], out, clip(rgb))
-    out = np.where((y >= 1.0)[..., None], 1.0, out)
-    return np.where((y <= 0.0)[..., None], 0.0, out)
+    # The three input policies, in the order they apply. They overlap, so the
+    # order is the answer and not a detail of how the lines are written: a
+    # pixel with Y above 1 and no usable chromaticity is white, not a clip.
+    # Y at or below 0 is black. Y at or above the target peak is white, which
+    # is the projection's own limit, since the effective gamut shrinks to the
+    # white point as Y approaches 1. A non-positive denominator has no
+    # continuous answer, so it takes the hard clip.
+    lanes = np.ones(3, dtype=bool)
+    return np.select(
+        [
+            (y <= 0.0)[..., None] & lanes,
+            (y >= 1.0)[..., None] & lanes,
+            (~has_chroma)[..., None] & lanes,
+        ],
+        [np.zeros(3), np.ones(3), clip(rgb)],
+        default=np.clip(projected, 0.0, 1.0),
+    )
 
 
 def bt2407(rgb, method="softclip", beta=0.2, src_gamut="auto", props=None):
@@ -257,7 +310,11 @@ def bt2407(rgb, method="softclip", beta=0.2, src_gamut="auto", props=None):
     """
     if method not in METHODS:
         raise ValueError(f"method must be one of {', '.join(METHODS)}, got {method!r}")
+    # Both remaining arguments are validated whatever the method, so a typo in
+    # one of them is not swallowed by picking the hard clip.
+    if not np.isfinite(beta) or not 0.0 <= beta < 1.0:
+        raise ValueError(f"beta must be in [0, 1), got {beta}")
+    primaries, label = resolve_source_gamut(src_gamut, props)
     if method == "clip":
         return clip(rgb), "bt2020"
-    primaries, white, label = resolve_source_gamut(src_gamut, props)
-    return softclip(rgb, beta=beta, src_primaries=primaries, src_white=white), label
+    return softclip(rgb, beta=beta, src_primaries=primaries), label

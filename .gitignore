@@ -18,9 +18,6 @@ __pycache__/
 .pytest_cache/
 *.npz
 
-# generated fixtures, rebuilt from a fixed seed on every run
-reference/_fixtures/
-
 # editor and OS
 .vscode/
 .idea/

@@ -1,20 +1,16 @@
-"""Generate the fixtures the plugin is compared against.
+"""Build the fixtures the plugin is compared against.
 
-Writes one npz into `_fixtures/`, which git ignores. Everything is derived
-from a fixed seed and from the oracle, so it is reproducible and is never
-committed. Run it with:
+`build()` returns everything in memory, computed from a fixed seed and from
+the oracle. Nothing is written to disk: an archive file would go stale the
+moment the oracle changed, and the build takes well under a second.
 
-    uv run --project reference python reference/fixtures.py
-
-Layout of the archive. `meta` is a JSON document listing the cases. Each
-tone-mapping case `name` contributes `tm/<name>/in` and, for each of the five
-representations, `tm/<name>/<representation>`. Each gamut case contributes
-`gm/<name>/in` and `gm/<name>/out`. All arrays are (N, 3) float64, linear
-BT.2020 RGB on input; the consumer decides how to shape them into a frame.
+build() returns (meta, arrays). meta lists the cases with the exact
+parameters each was produced with. Each tone-mapping case `name` contributes
+`tm/<name>/in` and, for each of the five representations,
+`tm/<name>/<representation>`; each gamut case contributes `gm/<name>/in` and
+`gm/<name>/out`. All arrays are (N, 3) float64, linear BT.2020 RGB on input.
+The consumer decides how to shape them into a frame.
 """
-
-import json
-from pathlib import Path
 
 import numpy as np
 from bt2390_ref import (
@@ -22,6 +18,7 @@ from bt2390_ref import (
     REPRESENTATIONS,
     RGB709_TO_XYZ,
     RGB2020_TO_XYZ,
+    Eetf,
     apply_matrix,
     bt2390,
     rgb_to_xyz_matrix,
@@ -31,10 +28,9 @@ from bt2407_ref import (
     XYZ_TO_RGB709,
     boundary_t,
     bt2407,
+    uv_to_xyz,
+    xyz_to_uv,
 )
-
-OUT_DIR = Path(__file__).resolve().parent / "_fixtures"
-ARCHIVE = OUT_DIR / "fixtures.npz"
 
 NOMINAL = 100.0  # cd/m2 that 1.0 means on the tone mapper's input
 XYZ_TO_RGB2020 = np.linalg.inv(RGB2020_TO_XYZ)
@@ -78,31 +74,26 @@ def along_709_rays(fractions, relative_luminances):
     uw, vw = WHITE_UV
     rows = []
     for hue in CORNERS:
-        xyz = apply_matrix(RGB709_TO_XYZ, hue)
-        denom = xyz[0] + 15.0 * xyz[1] + 3.0 * xyz[2]
-        du = 4.0 * xyz[0] / denom - uw
-        dv = 9.0 * xyz[1] / denom - vw
+        u, v, _ = xyz_to_uv(apply_matrix(RGB709_TO_XYZ, hue))
+        du, dv = u - uw, v - vw
         for y in relative_luminances:
-            t709 = float(boundary_t(XYZ_TO_RGB709, np.float64(y), du, dv))
+            y = np.float64(y)
+            t709 = float(boundary_t(XYZ_TO_RGB709, y, du, dv))
             for fraction in fractions:
                 s = fraction * t709
-                u2, v2 = uw + s * du, vw + s * dv
-                rows.append(
-                    [
-                        9.0 * y * u2 / (4.0 * v2),
-                        y,
-                        y * (12.0 - 3.0 * u2 - 20.0 * v2) / (4.0 * v2),
-                    ]
-                )
+                rows.append(uv_to_xyz(y, uw + s * du, vw + s * dv))
     return apply_matrix(XYZ_TO_RGB2020, np.array(rows))
 
 
-def tone_mapping_input():
-    """Every interesting linear BT.2020 input, in cd/m2."""
-    knee = 87.836267395426  # where the spline takes over for LW 1000, Lmax 203
-    neutral = np.array(
-        [0.0, 5e-5, 1e-4, 0.001, 1.0, knee, 203.0, 1000.0, 4000.0, 10000.0]
-    )
+def tone_mapping_input(knees):
+    """Every interesting linear BT.2020 input, in cd/m2.
+
+    knees holds the knee luminance of each parameter set, taken from the
+    curve rather than written down, so every case has a sample sitting
+    exactly on its own turning point.
+    """
+    levels = [0.0, 5e-5, 1e-4, 0.001, 1.0, 203.0, 1000.0, 4000.0, 10000.0]
+    neutral = np.array(sorted(set(levels) | set(knees)))
     ramp = np.linspace(0.0, 1000.0, 256)
     rng = np.random.default_rng(20260912)
 
@@ -169,7 +160,9 @@ def gamut_input(tone_mapped):
             [0.0, 1.6, 0.0],  # a channel above 1, Y above 1
             [0.0, 0.9, 0.0],  # a channel below 1, Y below 1, far outside BT.709
             [-0.05, 0.4, 0.02],  # a negative channel
-            [0.0, 1.0, -5.0],  # no usable chromaticity
+            [0.0, 1.0, -5.0],  # Y 0.38, no usable chromaticity: hard clip
+            [0.0, 4.0, -10.0],  # Y 2.12, no usable chromaticity: white wins
+            [0.0, 0.0, -1.0],  # Y -0.06, no usable chromaticity: black wins
         ]
     )
     return np.vstack(
@@ -181,58 +174,48 @@ def gamut_input(tone_mapped):
     )
 
 
-def build():
-    arrays = {}
-    meta = {"nominal_luminance": NOMINAL, "tone": {}, "gamut": {}}
+def parameters(case):
+    """One tone-mapping case filled out with the plugin's defaults."""
+    full = dict(
+        src_min=0.0,
+        src_max=1000.0,
+        dst_min=0.0,
+        dst_max=203.0,
+        nominal_luminance=NOMINAL,
+    )
+    full.update(TONE_CASES[case])
+    return full
 
-    rgb_cd = tone_mapping_input()
-    tone_in = rgb_cd / NOMINAL
-    for name, params in TONE_CASES.items():
-        full = dict(
-            src_min=0.0,
-            src_max=1000.0,
-            dst_min=0.0,
-            dst_max=203.0,
-            nominal_luminance=NOMINAL,
-        )
-        full.update(params)
-        scale = NOMINAL / full["nominal_luminance"]
-        arrays[f"tm/{name}/in"] = tone_in * scale
+
+def build():
+    """(meta, arrays) for every case. Cheap enough to call from each test."""
+    arrays = {}
+    meta = {"tone": {}, "gamut": {}}
+
+    settings = {name: parameters(name) for name in TONE_CASES}
+    knees = [
+        Eetf(p["src_min"], p["src_max"], p["dst_min"], p["dst_max"]).knee_luminance()
+        for p in settings.values()
+    ]
+    rgb_cd = tone_mapping_input(knees)
+
+    for name, full in settings.items():
+        # Each case reads 1.0 as its own nominal_luminance, so the same
+        # physical colours need a different array per input scale.
+        tone_in = rgb_cd / full["nominal_luminance"]
+        arrays[f"tm/{name}/in"] = tone_in
         for representation in REPRESENTATIONS:
             arrays[f"tm/{name}/{representation}"] = bt2390(
-                tone_in * scale, representation=representation, **full
+                tone_in, representation=representation, **full
             )
         meta["tone"][name] = full
 
-    mapped = bt2390(tone_in, src_min=0.0, src_max=1000.0)
-    gamut_in = gamut_input(mapped)
+    gamut_in = gamut_input(bt2390(rgb_cd / NOMINAL, src_min=0.0, src_max=1000.0))
     for name, params in GAMUT_CASES.items():
         arrays[f"gm/{name}/in"] = gamut_in
         out, label = bt2407(gamut_in, **params)
         arrays[f"gm/{name}/out"] = out
         meta["gamut"][name] = dict(params, label=label)
 
-    meta["points"] = {"tone": int(tone_in.shape[0]), "gamut": int(gamut_in.shape[0])}
+    meta["points"] = {"tone": int(rgb_cd.shape[0]), "gamut": int(gamut_in.shape[0])}
     return meta, arrays
-
-
-def main():
-    meta, arrays = build()
-    OUT_DIR.mkdir(exist_ok=True)
-    np.savez_compressed(ARCHIVE, meta=np.array(json.dumps(meta, indent=1)), **arrays)
-    print(
-        f"{ARCHIVE.name}: {len(arrays)} arrays, "
-        f"{meta['points']['tone']} tone points, {meta['points']['gamut']} gamut points"
-    )
-
-
-def load():
-    """The archive, generating it first if it is not there."""
-    if not ARCHIVE.exists():
-        main()
-    data = np.load(ARCHIVE)
-    return json.loads(str(data["meta"])), data
-
-
-if __name__ == "__main__":
-    main()

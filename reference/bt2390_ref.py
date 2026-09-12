@@ -121,12 +121,22 @@ class Eetf:
     """
 
     def __init__(self, src_min, src_max, dst_min, dst_max):
+        # The domain check comes first. PQ clamps anything outside [0, 10000]
+        # to its ends, so two values above the peak would both encode to 1.0
+        # and leave the span at zero.
+        for name, value in (
+            ("src_min", src_min),
+            ("src_max", src_max),
+            ("dst_min", dst_min),
+            ("dst_max", dst_max),
+        ):
+            if not np.isfinite(value) or not 0.0 <= value <= PQ_PEAK:
+                raise ValueError(
+                    f"{name} must be a luminance from 0 to 10000 cd/m2, got {value}"
+                )
         for name, value in (("src_max", src_max), ("dst_max", dst_max)):
-            if not np.isfinite(value) or value <= 0.0:
+            if value <= 0.0:
                 raise ValueError(f"{name} must be a positive luminance in cd/m2")
-        for name, value in (("src_min", src_min), ("dst_min", dst_min)):
-            if not np.isfinite(value):
-                raise ValueError(f"{name} must be a finite luminance in cd/m2")
         if src_min >= src_max:
             raise ValueError("src_min must be below src_max")
         if dst_min >= dst_max:
@@ -147,6 +157,17 @@ class Eetf:
             raise ValueError(
                 "dst_min is too high for the black lift to stay monotone: "
                 f"minLum is {self.min_lum:.4f}, the bound is 0.25"
+            )
+
+        # Below KS = 0 the whole domain is spline and P(0) is negative, so E2
+        # leaves [0, maxLum], E4 drops below PQ(Lmin) and the chroma ratio
+        # changes sign. Same class of error as the black-lift bound, and just
+        # as far from any realistic target.
+        if self.ks < 0.0:
+            raise ValueError(
+                "dst_max is too low for the tone curve to stay in range: "
+                f"maxLum is {self.max_lum:.4f} and KS is {self.ks:.4f}, "
+                "which must not be below 0 (maxLum at least 1/3)"
             )
 
     @property
@@ -202,11 +223,18 @@ def chroma_ratio(v1, v2):
     return np.where(ok, np.minimum(v1 / d2, v2 / d1), 1.0)
 
 
-def _scale_rgb(rgb, v1, v2):
-    """rgb * (v2 / v1), black where the driving value v1 is zero."""
+def _scale_rgb(rgb, v1, v2, black):
+    """rgb * (v2 / v1), taking the curve's own black where v1 is not positive.
+
+    A driving value of zero leaves the ratio undefined. Annex 5 says nothing
+    about it, but the other three representations put an exact-black input at
+    Lmin, so these two have to as well. Returning literal black instead would
+    make exact black the one unlifted pixel in a frame whenever dst_min is
+    above src_min, a visible step one LSB wide.
+    """
     ok = v1 > 0.0
     k = np.where(ok, v2 / np.where(ok, v1, 1.0), 0.0)
-    return rgb * k[..., None]
+    return np.where(ok[..., None], rgb * k[..., None], black)
 
 
 def bt2390(
@@ -222,7 +250,9 @@ def bt2390(
 
     Input has 1.0 meaning nominal_luminance cd/m2. Output has 1.0 meaning
     dst_max cd/m2. Channels above 1.0 are possible in the ictcp, ycbcr and
-    yrgb representations; rgb and maxrgb stay inside [0, 1].
+    yrgb representations. rgb and maxrgb stay inside [0, 1] when dst_min is
+    at or below src_min; a positive black lift takes all five above 1.0 by
+    the Annex 5 overshoot, b (1 - maxLum)^4 in PQ.
     """
     if representation not in REPRESENTATIONS:
         raise ValueError(
@@ -234,6 +264,9 @@ def bt2390(
 
     curve = Eetf(src_min, src_max, dst_min, dst_max)
     rgb = np.clip(np.asarray(rgb, dtype=np.float64) * nominal_luminance, 0.0, PQ_PEAK)
+    # What an exact-black input becomes: E1 is 0, so E4 is PQ(Lmin) and the
+    # luminance is dst_min. The two ratio representations fall back on it.
+    black = float(pq_eotf(curve(pq_inverse_eotf(0.0))))
 
     if representation == "ictcp":
         ictcp = apply_matrix(
@@ -260,7 +293,7 @@ def bt2390(
     elif representation == "yrgb":
         y1 = rgb @ LUMA_BT2020_PRINTED
         y2 = pq_eotf(curve(pq_inverse_eotf(y1)))
-        out = _scale_rgb(rgb, y1, y2)
+        out = _scale_rgb(rgb, y1, y2, black)
 
     elif representation == "rgb":
         out = pq_eotf(curve(pq_inverse_eotf(rgb)))
@@ -268,6 +301,6 @@ def bt2390(
     else:  # maxrgb
         m1 = rgb.max(axis=-1)
         m2 = pq_eotf(curve(pq_inverse_eotf(m1)))
-        out = _scale_rgb(rgb, m1, m2)
+        out = _scale_rgb(rgb, m1, m2, black)
 
     return out / dst_max

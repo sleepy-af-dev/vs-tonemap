@@ -262,11 +262,46 @@ def test_e1_is_clamped_to_the_domain():
         dict(src_min=0.0, src_max=1000.0, dst_min=50.0, dst_max=203.0),
         dict(src_min=0.0, src_max=np.inf, dst_min=0.0, dst_max=203.0),
         dict(src_min=np.nan, src_max=1000.0, dst_min=0.0, dst_max=203.0),
+        # Outside the PQ domain. Two values above 10000 both encode to 1.0,
+        # which makes the span zero.
+        dict(src_min=0.0, src_max=20000.0, dst_min=0.0, dst_max=203.0),
+        dict(src_min=20000.0, src_max=30000.0, dst_min=0.0, dst_max=203.0),
+        dict(src_min=-5.0, src_max=1000.0, dst_min=0.0, dst_max=203.0),
+        dict(src_min=0.0, src_max=1000.0, dst_min=-1.0, dst_max=203.0),
+        dict(src_min=0.0, src_max=1000.0, dst_min=0.0, dst_max=20000.0),
+        # KS below 0, where the whole curve is spline and P(0) is negative.
+        dict(src_min=0.0, src_max=10000.0, dst_min=0.0, dst_max=5.0),
+        dict(src_min=0.0, src_max=1000.0, dst_min=0.0, dst_max=3.0),
     ],
 )
 def test_parameter_errors(kwargs):
     with pytest.raises(ValueError):
         Eetf(**kwargs)
+
+
+def test_ks_below_zero_is_rejected_because_e2_goes_negative():
+    """maxLum below 1/3 puts the whole domain on the spline, and P(0) < 0.
+
+    E2 then leaves [0, maxLum], E4 falls below PQ(Lmin) and the chroma ratio
+    changes sign. Realistic targets are nowhere near it: with LB 0, LW 1000
+    puts the bound at Lmax 5.20 cd/m2 and LW 10000 at 15.13.
+    """
+    for src_max, expected in ((1000.0, 5.1985), (10000.0, 15.1343)):
+        pq_lb = float(pq_inverse_eotf(0.0))
+        pq_lw = float(pq_inverse_eotf(src_max))
+        bound = float(pq_eotf(pq_lb + (pq_lw - pq_lb) / 3.0))
+        assert bound == pytest.approx(expected, abs=0.001)
+        assert Eetf(0.0, src_max, 0.0, bound * 1.02).ks >= 0.0
+        with pytest.raises(ValueError, match="KS"):
+            Eetf(0.0, src_max, 0.0, bound * 0.98)
+
+
+def test_every_luminance_must_lie_in_the_pq_domain():
+    Eetf(0.0, 10000.0, 0.0, 203.0)  # both ends exactly on the domain
+    for name in ("src_min", "src_max", "dst_min", "dst_max"):
+        ok = dict(src_min=0.0, src_max=1000.0, dst_min=0.0, dst_max=203.0)
+        with pytest.raises(ValueError, match="0 to 10000"):
+            Eetf(**{**ok, name: 10001.0})
 
 
 def test_target_black_below_mastering_black_is_allowed():
@@ -306,6 +341,54 @@ def test_black_stays_black(representation):
     assert np.all(out == 0.0)
 
 
+@pytest.mark.parametrize("dst_min", [0.0, 0.5, 1.0])
+def test_black_maps_to_the_curves_own_black_in_every_representation(dst_min):
+    """A driving value of zero has no ratio, so the pixel takes the curve's black.
+
+    The other three representations put an exact-black input at Lmin, so
+    yrgb and maxrgb have to agree, otherwise a positive black lift leaves
+    exact black as the only unlifted pixel in the frame.
+    """
+    outputs = {
+        representation: bt2390(
+            np.zeros((1, 3)),
+            0.0,
+            1000.0,
+            dst_min=dst_min,
+            representation=representation,
+        )
+        for representation in REPRESENTATIONS
+    }
+    expected = dst_min / 203.0
+    for representation, out in outputs.items():
+        assert out == pytest.approx(expected, abs=1e-12), representation
+
+
+@pytest.mark.parametrize(
+    "representation,driving",
+    [
+        ("yrgb", lambda rgb: rgb @ LUMA_BT2020_PRINTED),
+        ("maxrgb", lambda rgb: rgb.max(axis=-1)),
+    ],
+)
+def test_the_ratio_representations_are_continuous_in_their_driving_value(
+    representation, driving
+):
+    """The quantity the ratio is built from lands on Lmin at and near black.
+
+    Individual channels do not: a saturated near-black is expanded by the
+    ratio, so yrgb takes (1e-7, 0, 0) cd/m2 to a red channel of Lmin/0.2627.
+    That is Annex 5's formula. What must not happen is exact black dropping
+    to zero while everything around it sits at Lmin.
+    """
+    tiny = 1e-9
+    steps = np.array([[0.0, 0.0, 0.0], [tiny, 0.0, 0.0], [tiny, tiny, tiny]])
+    out = bt2390(steps, 0.0, 1000.0, dst_min=0.5, representation=representation)
+    # The tolerance is the curve's own slope over that interval, not slack:
+    # before the fix exact black read 0 against 0.5 for its neighbours.
+    assert np.allclose(driving(out) * 203.0, 0.5, rtol=1e-3)
+
+
 @pytest.mark.parametrize("representation", REPRESENTATIONS)
 def test_negative_input_is_treated_as_black(representation):
     out = bt2390(np.full((1, 3), -0.5), 0.0, 1000.0, representation=representation)
@@ -324,12 +407,20 @@ def test_output_volume_per_representation():
         assert out.max() > 1.0
 
 
-def test_ictcp_chroma_scaling_is_a_scaling_of_lmsp():
-    """Scaling CT and CP by I2/I1 scales the whole L'M'S' vector by I2/I1."""
+@pytest.mark.parametrize("dst_min", [0.0, 0.5])
+def test_ictcp_chroma_scaling_is_a_scaling_of_lmsp(dst_min):
+    """Scaling CT and CP by I2/I1 scales the whole L'M'S' vector by I2/I1.
+
+    That identity holds on the compressing branch. Where the curve lifts,
+    which only happens near black with a positive b, the ratio is I1/I2 and
+    the result is no longer a pure scaling. What has to hold on both is that
+    the reconstructed L'M'S' never goes negative, so the EOTF needs no clamp
+    beyond its own.
+    """
     rgb = np.clip(random_rgb(9) * 100.0, 0.0, 10000.0)
     lmsp = pq_inverse_eotf(apply_matrix(RGB2020_TO_LMS, rgb))
     ictcp = apply_matrix(LMSP_TO_ICTCP, lmsp)
-    curve = Eetf(0.0, 1000.0, 0.0, 203.0)
+    curve = Eetf(0.0, 1000.0, dst_min, 203.0)
 
     i1 = ictcp[..., 0]
     i2 = curve(i1)
@@ -342,7 +433,47 @@ def test_ictcp_chroma_scaling_is_a_scaling_of_lmsp():
     assert np.all(mapped >= -1e-15)
 
     compressing = i2 < i1
-    expected = np.where(compressing, i2 / np.where(compressing, i1, 1.0), 1.0)
+    # A relative margin, because the E1 round trip can land a ULP high
+    # at the very bottom of the range where the curve is the identity.
+    lifting = i2 > i1 * (1.0 + 1e-9)
+    assert compressing.any()
+    assert lifting.any() == (dst_min > 0.0)
+
+    scale = np.where(compressing, i2 / np.where(compressing, i1, 1.0), 1.0)
     assert np.allclose(
-        mapped[compressing], (expected[..., None] * lmsp)[compressing], atol=1e-14
+        mapped[compressing], (scale[..., None] * lmsp)[compressing], atol=1e-14
+    )
+
+
+@pytest.mark.parametrize("dst_min", [0.0, 0.5])
+def test_ycbcr_chroma_scaling_is_a_scaling_of_rgbp(dst_min):
+    """The Y'CbCr counterpart: the same identity on PQ-encoded R'G'B'."""
+    rgb = np.clip(random_rgb(13) * 100.0, 0.0, 10000.0)
+    rgbp = pq_inverse_eotf(rgb)
+    curve = Eetf(0.0, 1000.0, dst_min, 203.0)
+
+    y1 = rgbp @ LUMA_BT2020_PRINTED
+    y2 = curve(y1)
+    k = chroma_ratio(y1, y2)
+    assert np.all(k <= 1.0 + 1e-15)
+
+    cb = (rgbp[..., 2] - y1) / CB_DIVISOR
+    cr = (rgbp[..., 0] - y1) / CR_DIVISOR
+    rp = y2 + CR_DIVISOR * k * cr
+    bp = y2 + CB_DIVISOR * k * cb
+    kr, kg, kb = LUMA_BT2020_PRINTED
+    gp = (y2 - kr * rp - kb * bp) / kg
+    mapped = np.stack([rp, gp, bp], axis=-1)
+    assert np.all(mapped >= -1e-15)
+
+    compressing = y2 < y1
+    # A relative margin, because the E1 round trip can land a ULP high
+    # at the very bottom of the range where the curve is the identity.
+    lifting = y2 > y1 * (1.0 + 1e-9)
+    assert compressing.any()
+    assert lifting.any() == (dst_min > 0.0)
+
+    scale = np.where(compressing, y2 / np.where(compressing, y1, 1.0), 1.0)
+    assert np.allclose(
+        mapped[compressing], (scale[..., None] * rgbp)[compressing], atol=1e-14
     )

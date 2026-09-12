@@ -28,8 +28,10 @@ from bt2407_ref import (
     resolve_source_gamut,
     soft_clip,
     softclip,
+    uv_to_xyz,
     valid_gamut,
     xy_to_uv,
+    xyz_to_uv,
 )
 
 XYZ_TO_RGB2020 = np.linalg.inv(RGB2020_TO_XYZ)
@@ -42,9 +44,7 @@ def random_rays(seed, n=6000):
     rgb = rng.random((4 * n, 3))
     xyz = apply_matrix(RGB2020_TO_XYZ, rgb)
     y = xyz[..., 1]
-    denom = xyz[..., 0] + 15.0 * xyz[..., 1] + 3.0 * xyz[..., 2]
-    u = 4.0 * xyz[..., 0] / denom
-    v = 9.0 * xyz[..., 1] / denom
+    u, v, _ = xyz_to_uv(xyz)
     du = u - WHITE_UV[0]
     dv = v - WHITE_UV[1]
     keep = (y > 0.02) & (y < 0.9) & (np.hypot(du, dv) > 1e-3)
@@ -53,11 +53,7 @@ def random_rays(seed, n=6000):
 
 def inside(xyz_to_rgb, y, du, dv, t):
     uw, vw = WHITE_UV
-    u = uw + t * du
-    v = vw + t * dv
-    x = 9.0 * y * u / (4.0 * v)
-    z = y * (12.0 - 3.0 * u - 20.0 * v) / (4.0 * v)
-    rgb = apply_matrix(xyz_to_rgb, np.stack([x, y, z], axis=-1))
+    rgb = apply_matrix(xyz_to_rgb, uv_to_xyz(y, uw + t * du, vw + t * dv))
     return np.all((rgb >= -1e-12) & (rgb <= 1.0 + 1e-12), axis=-1)
 
 
@@ -171,17 +167,31 @@ def test_tone_mapper_output_reaches_outside_the_target_volume():
     assert xyz[..., 1].max() > 1.0
 
 
-def test_softclip_output_is_inside_the_unit_cube():
-    out = softclip(tone_mapped(31))
-    assert out.min() >= 0.0
-    assert out.max() <= 1.0
+def test_the_projection_lands_in_the_unit_cube_before_any_clamp():
+    """Asserting after the clamp proves nothing, so look at the value under it.
+
+    Every pixel the projection handles ends at or inside the BT.709 boundary
+    by construction, so the final clamp has to be a no-op there. If it ever
+    bites, the projection is wrong and the clamp is hiding it.
+    """
+    mapped = tone_mapped(31)
+    xyz = apply_matrix(RGB2020_TO_XYZ, mapped)
+    y = xyz[..., 1]
+    _, _, denom = xyz_to_uv(xyz)
+    projectable = (y > 0.0) & (y < 1.0) & (denom > 0.0)
+    assert projectable.mean() > 0.5
+
+    raw = softclip(mapped, clamp=False)[projectable]
+    assert raw.min() > -1e-12
+    assert raw.max() < 1.0 + 1e-12
+    assert np.allclose(raw, softclip(mapped)[projectable], rtol=0.0, atol=1e-12)
 
 
 def test_softclip_preserves_luminance_and_hue_direction():
     mapped = tone_mapped(31)
     xyz = apply_matrix(RGB2020_TO_XYZ, mapped)
     y = xyz[..., 1]
-    denom = xyz[..., 0] + 15.0 * xyz[..., 1] + 3.0 * xyz[..., 2]
+    u, v, denom = xyz_to_uv(xyz)
     projected = (y > 1e-6) & (y < 1.0 - 1e-6) & (denom > 0.0)
     assert projected.mean() > 0.5
 
@@ -190,11 +200,9 @@ def test_softclip_preserves_luminance_and_hue_direction():
     assert np.allclose(out_xyz[projected, 1], y[projected], rtol=1e-9, atol=1e-12)
 
     uw, vw = WHITE_UV
-    du = 4.0 * xyz[..., 0] / denom - uw
-    dv = 9.0 * xyz[..., 1] / denom - vw
-    out_denom = out_xyz[..., 0] + 15.0 * out_xyz[..., 1] + 3.0 * out_xyz[..., 2]
-    du2 = 4.0 * out_xyz[..., 0] / out_denom - uw
-    dv2 = 9.0 * out_xyz[..., 1] / out_denom - vw
+    du, dv = u - uw, v - vw
+    u2, v2, _ = xyz_to_uv(out_xyz)
+    du2, dv2 = u2 - uw, v2 - vw
     cross = du[projected] * dv2[projected] - dv[projected] * du2[projected]
     dot = du[projected] * du2[projected] + dv[projected] * dv2[projected]
     assert np.max(np.abs(cross)) < 1e-9
@@ -208,9 +216,8 @@ def test_softclip_leaves_the_inner_region_alone_and_equals_the_hard_clip_there()
 
     xyz = apply_matrix(RGB2020_TO_XYZ, rgb)
     y = xyz[..., 1]
-    denom = xyz[..., 0] + 15.0 * xyz[..., 1] + 3.0 * xyz[..., 2]
-    du = 4.0 * xyz[..., 0] / denom - WHITE_UV[0]
-    dv = 9.0 * xyz[..., 1] / denom - WHITE_UV[1]
+    u, v, _ = xyz_to_uv(xyz)
+    du, dv = u - WHITE_UV[0], v - WHITE_UV[1]
     r = 1.0 / boundary_t(XYZ_TO_RGB709, y, du, dv)
     untouched = (r <= 1.0 - beta) & (y > 0.0) & (y < 1.0)
 
@@ -244,6 +251,31 @@ def test_softclip_converges_on_white_as_luminance_approaches_one():
     distance = [float(np.max(np.abs(o - 1.0))) for o in out]
     assert distance == sorted(distance, reverse=True)
     assert distance[-1] < 1e-3
+
+
+def test_the_input_policies_apply_in_a_fixed_order():
+    """Y <= 0, then Y >= 1, then the denominator guard.
+
+    The three conditions overlap, so the order is the answer rather than a
+    detail of how they are written. A pixel with Y above 1 and no usable
+    chromaticity is white, not a hard clip.
+    """
+    corners = np.array(
+        [
+            [0.0, 4.0, -10.0],  # Y 2.12, denominator -0.82
+            [0.0, 0.0, -1.0],  # Y -0.06, denominator -4.24
+            [0.0, 1.0, -5.0],  # Y 0.38, denominator -10.81
+        ]
+    )
+    xyz = apply_matrix(RGB2020_TO_XYZ, corners)
+    _, _, denom = xyz_to_uv(xyz)
+    assert np.all(denom <= 0.0)
+    assert xyz[0, 1] >= 1.0 and xyz[1, 1] <= 0.0
+
+    out = softclip(corners)
+    assert np.array_equal(out[0], np.ones(3))  # Y >= 1 beats the guard
+    assert np.array_equal(out[1], np.zeros(3))  # Y <= 0 beats the guard
+    assert np.array_equal(out[2], clip(corners[2:3])[0])  # only then the guard
 
 
 def test_hard_clip_takes_over_where_there_is_no_chromaticity():
@@ -284,6 +316,44 @@ MASTERING_P3 = {
 }
 
 
+DCI_WHITE = (0.314, 0.351)
+
+
+def test_the_declared_white_is_validated_but_never_derived_with():
+    """The source matrix uses D65, because the projection white is D65.
+
+    Deriving with a declared non-D65 white puts D65 outside the source cube
+    (with DCI white, D65 at Y = 1 is RGB (1.093, 0.959, 1.151) there), so
+    above about Y = 0.85 the source boundary falls inside the BT.709 one,
+    alpha clamps to zero and the roll-off becomes a hard clip along
+    luminance.
+    """
+    dci_primaries = dict(
+        MASTERING_P3,
+        MasteringDisplayWhitePointX=DCI_WHITE[0],
+        MasteringDisplayWhitePointY=DCI_WHITE[1],
+    )
+    assert mastering_gamut(dci_primaries) is not None  # still valid metadata
+
+    rgb = tone_mapped(67)
+    d65_result, _ = bt2407(rgb, src_gamut="auto", props=MASTERING_P3)
+    dci_result, label = bt2407(rgb, src_gamut="auto", props=dci_primaries)
+    assert label == "mastering"
+    assert np.array_equal(d65_result, dci_result)
+
+
+def test_alpha_stays_positive_up_to_the_top_of_the_range():
+    """The collapse the D65 derivation prevents, checked where it appeared."""
+    xyz_to_p3 = np.linalg.inv(rgb_to_xyz_matrix(PRIMARIES_P3D65))
+    du, dv = np.float64(0.06), np.float64(0.02)
+    for y in (0.5, 0.85, 0.9, 0.99):
+        y = np.float64(y)
+        alpha = (
+            boundary_t(xyz_to_p3, y, du, dv) / boundary_t(XYZ_TO_RGB709, y, du, dv) - 1.0
+        )
+        assert float(alpha) > 0.0, y
+
+
 def test_mastering_gamut_is_read_and_validated():
     primaries, white = mastering_gamut(MASTERING_P3)
     assert np.allclose(primaries, PRIMARIES_P3D65)
@@ -305,6 +375,35 @@ def test_mastering_gamut_is_read_and_validated():
 )
 def test_broken_mastering_metadata_counts_as_absent(broken):
     assert mastering_gamut(broken) is None
+
+
+def test_a_white_point_arriving_as_a_sequence_is_read():
+    """Some bindings hand back a one-element array for a scalar property."""
+    boxed = dict(
+        MASTERING_P3,
+        MasteringDisplayWhitePointX=[0.3127],
+        MasteringDisplayWhitePointY=np.array([0.3290]),
+    )
+    assert mastering_gamut(boxed) == mastering_gamut(MASTERING_P3)
+    assert (
+        mastering_gamut(dict(MASTERING_P3, MasteringDisplayWhitePointX=[0.3, 0.4]))
+        is None
+    )
+
+
+def test_a_primary_a_hair_outside_the_diagram_is_still_accepted():
+    """x + y is allowed 1e-9 of slack, which a source filter can easily use up."""
+    assert valid_gamut(((0.708 + 5e-10, 0.292), (0.170, 0.797), (0.131, 0.046)), D65)
+    assert not valid_gamut(((0.708 + 1e-6, 0.292), (0.170, 0.797), (0.131, 0.046)), D65)
+
+
+def test_the_hard_clip_still_validates_its_other_arguments():
+    """Picking method=clip must not wave through a typo in beta or src_gamut."""
+    rgb = np.zeros((2, 3))
+    with pytest.raises(ValueError):
+        bt2407(rgb, method="clip", beta=5.0)
+    with pytest.raises(ValueError):
+        bt2407(rgb, method="clip", src_gamut="nonsense")
 
 
 def test_valid_gamut_accepts_the_standard_sets():
@@ -352,7 +451,7 @@ def test_a_primary_on_the_y_axis_is_accepted_but_y_zero_is_not():
     ],
 )
 def test_resolve_source_gamut(src_gamut, props, label):
-    assert resolve_source_gamut(src_gamut, props)[2] == label
+    assert resolve_source_gamut(src_gamut, props)[1] == label
 
 
 def test_bt2407_dispatch():
