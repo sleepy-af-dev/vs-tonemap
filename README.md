@@ -136,14 +136,29 @@ is compressed most.
 
 ### Output
 
-Linear BT.2020 RGBS, scaled so `dst_max` is 1.0. `_Transfer` stays 8,
-`_Primaries` stays 9, `_Range` is written as 1.
+Linear BT.2020 RGBS, scaled so `dst_max` is 1.0. `_Transfer` stays 8 and
+`_Primaries` stays 9. `_Range` is written as 1 on every core: cores from R74
+read it, and older ones ignore a key they do not know. `_ColorRange` is never
+written and never deleted, since on a new core it is an alias of `_Range`
+inside the map and deleting it would delete the tag just written.
 
 The properties that described the HDR content are removed, because it no
 longer exists: `MasteringDisplayMinLuminance`, `MasteringDisplayMaxLuminance`,
 `ContentLightLevelMax`, `ContentLightLevelAverage`, `DolbyVisionRPU` and
 `HDR10Plus`. The mastering primaries and white point stay, because `BT2407`
 reads them.
+
+That last part matters for a chain that stops here rather than going on to
+`BT2407`: the four mastering primaries properties survive onto SDR frames,
+where a downstream tool could read them as a claim about the output. Remove
+them if that would mislead:
+
+```python
+sdr = core.std.RemoveFrameProps(sdr, props=[
+    "MasteringDisplayPrimariesX", "MasteringDisplayPrimariesY",
+    "MasteringDisplayWhitePointX", "MasteringDisplayWhitePointY",
+])
+```
 
 Channels can exceed 1.0. In `ictcp`, `ycbcr` and `yrgb` the chroma scaling can
 put a channel several times above SDR white on saturated input, which is what
@@ -173,10 +188,15 @@ from white in u'v'. A colour less than `1 - beta` of the way from white to the
 BT.709 boundary comes through untouched, which is about a third of random
 in-gamut colours.
 
-Equation (5-4) of the report prints the bracket in the roll-off unsquared. As
-printed it evaluates to 3.17 where the function has to be 1, so the squared
-form is used, which is what the report's own construction, a quadratic Bezier
-extension, gives.
+Equation (5-4) of the report prints the bracket in the roll-off unsquared. At
+r = 1 + alpha, where the function has to be 1, the printed form gives 3.17
+with alpha 0.5 and beta 0.2, and since it divides by (beta - alpha) squared it
+also divides by zero whenever the two are equal. The squared form is used
+instead, which is what the report's own construction, a quadratic Bezier
+extension, gives, in the arrangement that divides by
+sqrt(beta^2 + (alpha - beta)(r + beta - 1)) + beta rather than by
+alpha - beta. The two are algebraically the same and only the second is
+defined when alpha equals beta.
 
 ### Source gamut
 
@@ -202,8 +222,9 @@ collapse the roll-off into a hard clip.
 ### Output
 
 Linear BT.709 RGBS with every channel in [0, 1]. `_Primaries` is set to 1,
-`_Transfer` stays 8, `_Range` is written as 1. The mastering primaries and
-white point properties are removed, and `TonemapSourceGamut` is added.
+`_Transfer` stays 8, and `_Range` is written as 1 on the same terms as above.
+The mastering primaries and white point properties are removed, and
+`TonemapSourceGamut` is added.
 
 ## Behaviour at the edges
 
@@ -255,6 +276,12 @@ bit-identical to the scalar path. `ictcp` differs by about 7e-12 in double,
 which is the fused multiply-add contraction its matrix chain allows, and that
 difference flips at most one ULP of the float32 the frame stores.
 
+One place those bounds do not apply is the discontinuities of the policies
+above, where the output jumps rather than varying smoothly. An input within
+rounding distance of one of those boundaries can land on either side of it,
+because the scalar path, the vector path and the reference sum in different
+orders. No fixture and no real content sits there.
+
 ## Speed and memory
 
 Measured on a 16-core desktop at 4K, 32 threads. The full chain above,
@@ -278,7 +305,8 @@ trade throughput for memory.
 `simd=0` on either filter runs the scalar reference path instead of the vector
 kernel. It exists so the test suite can compare the two, and as a way out if a
 machine ever disagrees with its own vector unit. It is not a tuning knob: the
-scalar path computes the same values and is up to five times slower.
+scalar path computes values within one float32 ULP of the vector path and is
+up to five times slower.
 
 `tonemapper.Info()` reports what the plugin chose, which is worth including in
 a bug report:
