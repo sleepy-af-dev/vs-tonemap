@@ -12,6 +12,8 @@ parameters each was produced with. Each tone-mapping case `name` contributes
 The consumer decides how to shape them into a frame.
 """
 
+from typing import Any
+
 import numpy as np
 
 from bt2390_ref import (
@@ -138,7 +140,7 @@ TONE_CASES = {
     "nominal_203": dict(src_min=0.0, src_max=1000.0, nominal_luminance=203.0),
 }
 
-GAMUT_CASES = {
+GAMUT_CASES: dict[str, dict[str, Any]] = {
     "clip": dict(method="clip"),
     "softclip_bt2020": dict(method="softclip", src_gamut="bt2020"),
     "softclip_p3d65": dict(method="softclip", src_gamut="p3d65"),

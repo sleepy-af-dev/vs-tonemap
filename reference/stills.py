@@ -16,6 +16,7 @@ import json
 import struct
 import zlib
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import vapoursynth as vs
@@ -29,7 +30,7 @@ RESOURCES = ROOT / ".local" / "resources"
 STILLS = RESOURCES / "stills"
 PLUGIN = ROOT / "build" / "tonemapper.dll"
 
-core = vs.core
+core: Any = vs.core  # the wheel's stub has no plugin namespaces
 
 # The clip's mastering metadata, which both chains are pinned to so that the
 # only difference between them is the thing being compared.

@@ -1,0 +1,9 @@
+{
+  "include": ["reference", "bench"],
+  "exclude": ["**/.venv", "**/__pycache__"],
+  "venvPath": "reference",
+  "venv": ".venv",
+  "extraPaths": ["reference", "reference/tests"],
+  "typeCheckingMode": "standard",
+  "reportImplicitRelativeImport": false
+}

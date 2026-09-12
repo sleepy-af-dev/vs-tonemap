@@ -31,6 +31,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import vapoursynth as vs
@@ -252,7 +253,7 @@ def sweep(core, frame, frames_one, frames_many, threads):
     rows = []
     stages = [("tone", r) for r in REPRESENTATIONS] + [("gamut", m) for m in METHODS]
     for stage in stages:
-        entry = {
+        entry: dict[str, Any] = {
             "filter": "BT2390" if stage[0] == "tone" else "BT2407",
             "path": stage[1],
         }
@@ -376,10 +377,10 @@ def main():
     )
     args = parser.parse_args()
 
-    core = vs.core
+    core: Any = vs.core  # the wheel's stub has no plugin namespaces
     if not hasattr(core, "tonemapper"):
         core.std.LoadPlugin(path=str(Path(args.dll) if args.dll else PLUGIN))
-    threads = os.cpu_count()
+    threads = os.cpu_count() or 1
     frames_many = max(args.frames, threads * 2)
 
     if args.chain:

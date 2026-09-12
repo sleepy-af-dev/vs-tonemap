@@ -358,7 +358,9 @@ def test_alpha_stays_positive_up_to_the_top_of_the_range():
 
 
 def test_mastering_gamut_is_read_and_validated():
-    primaries, white = mastering_gamut(MASTERING_P3)
+    found = mastering_gamut(MASTERING_P3)
+    assert found is not None
+    primaries, white = found
     assert np.allclose(primaries, PRIMARIES_P3D65)
     assert white == D65
 

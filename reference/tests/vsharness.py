@@ -5,6 +5,7 @@ same two gates, so the machinery lives here rather than twice over.
 """
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import vapoursynth as vs
@@ -35,7 +36,10 @@ GATES = {
 # The tags every clip these filters accept has to carry, or leave absent.
 LINEAR_BT2020 = {"_Transfer": 8, "_Primaries": 9, "_Range": 1}
 
-core = vs.core
+# Typed as Any because the wheel's stub is a template without the plugin
+# namespaces; VapourSynth fills those in with a generator this project does
+# not carry.
+core: Any = vs.core
 
 
 def make_clip(rows, props=None):
