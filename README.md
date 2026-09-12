@@ -1,0 +1,355 @@
+# vs-tonemapper
+
+A CPU-only VapourSynth plugin that converts PQ HDR to SDR. Two filters:
+
+- `BT2390` applies the ITU-R BT.2390 tone mapping curve as ITU-R BT.2408
+  Annex 5 specifies it, in any of the five colour representations that annex
+  describes.
+- `BT2407` converts BT.2020 to BT.709 with the luminance-preserving gamut
+  projection of ITU-R BT.2407 Annex 5.
+
+The maths follows the ITU text as written. Every pixel is computed in float64
+and stored as float32, and the speed comes from explicit SIMD rather than from
+approximating the equations. A float64 reference implementation of the same
+equations, together with the test suite that compares the two, is in
+`reference/`.
+
+## Requirements
+
+- VapourSynth R55 or later. The plugin is built against API 4.0, so newer
+  cores load it as well; it is tested on R79.
+- Windows x64. Nothing in the code is platform-specific, but this release is
+  built and tested only there.
+- An x86-64 CPU. The DLL carries kernels for SSE2 through AVX-512 and picks
+  the best one at load time, so one binary serves every machine.
+
+## Installing
+
+Put `tonemapper.dll` in a directory VapourSynth autoloads plugins from, or
+load it from the script:
+
+```python
+core.std.LoadPlugin(path="/path/to/tonemapper.dll")
+```
+
+It registers the namespace `tonemapper` and the identifier
+`com.vstonemapper.plugin`.
+
+## Usage
+
+Both filters take linear-light RGBS, that is 32-bit float RGB with a constant
+format and constant dimensions. `BT2390` expects BT.2020 primaries and
+produces BT.2020; `BT2407` expects the output of `BT2390` and produces
+BT.709. A full chain converts into linear RGBS, tone maps, gamut maps, and
+converts back out:
+
+```python
+lin = core.resize.Bicubic(src, format=vs.RGBS,
+                          transfer_in_s="st2084", transfer_s="linear",
+                          primaries_in_s="2020", primaries_s="2020",
+                          nominal_luminance=100)
+sdr = core.tonemapper.BT2390(lin, nominal_luminance=100)
+sdr = core.tonemapper.BT2407(sdr)
+out = core.resize.Bicubic(sdr, format=vs.YUV420P10, matrix_s="709",
+                          transfer_s="709", primaries_s="709")
+```
+
+The source filter has to attach the standard mastering display properties for
+the defaults to work; BestSource, L-SMASH-Works and ffms2 all do.
+
+### Units
+
+Every luminance is in cd/m2. `nominal_luminance` says how many cd/m2 the value
+1.0 in the input stands for, and carries the same meaning as the `resize`
+parameter of the same name, so the two lines can carry the same number. The
+output is scaled so that `dst_max` becomes 1.0, which is what the SDR transfer
+function on the way out expects.
+
+### Frame properties
+
+A property that is present and contradicts the contract is an error. A
+property that is absent is not, so untagged clips are accepted. A tag of the
+wrong type is an error naming the property rather than something to skip over.
+The mastering metadata is read as either a float or an integer, since a
+hand-written `SetFrameProps` call turns a whole number into an integer
+property.
+
+`_Transfer` must be 8 (linear) and `_Primaries` 9 (BT.2020). For range, cores
+from R74 on carry `_Range`, which must be 1 (full); older cores carry
+`_ColorRange`, which must be 0, the convention of the day. Both spellings are
+read, so range validation works on every supported core.
+
+## tonemapper.BT2390
+
+```
+BT2390(clip clip, [float src_min, float src_max, float dst_min=0.0,
+       float dst_max=203.0, float nominal_luminance=100.0,
+       data representation="ictcp", int simd=1])
+```
+
+| parameter | default | meaning |
+|---|---|---|
+| `src_min` | `MasteringDisplayMinLuminance` | mastering display black, LB |
+| `src_max` | `MasteringDisplayMaxLuminance` | mastering display peak, LW |
+| `dst_min` | 0 | target black, Lmin |
+| `dst_max` | 203 | target peak, Lmax. BT.2408 HDR reference white |
+| `nominal_luminance` | 100 | cd/m2 that 1.0 in the input stands for |
+| `representation` | `ictcp` | `ictcp`, `ycbcr`, `yrgb`, `rgb`, `maxrgb` |
+| `simd` | 1 | 0 runs the scalar reference instead |
+
+`src_min` and `src_max` are read from the frame properties when they are not
+given, so a clip with mastering metadata needs neither. A max property that is
+absent, not finite, or not positive counts as absent, while a min property of
+0 is a valid black. If neither the argument nor a usable property is there,
+the filter raises an error rather than guessing; BT.2408 names 0 and 10000 as
+the fallbacks, and you can pass those explicitly if that is what you want.
+
+Every check whose inputs are all arguments runs when the filter is created, so
+a bad parameter fails at script evaluation. The checks that need a value from
+the properties run on the first frame, and their messages name the property
+the value came from. It is an error if LW or Lmax is not positive, if LB is at
+or above LW, if Lmin is at or above Lmax, if any luminance falls outside the
+PQ range of 0 to 10000, or if the parameters put the curve outside the range
+where it is monotone (a black lift above 0.25 in PQ terms, or a knee point
+below 0, which needs a target peak of about 5 cd/m2 against a 1000 cd/m2
+master).
+
+### Representations
+
+Annex 5 lists five ways to drive the curve, and the plugin implements all of
+them without a strength knob, because the formulas are the point.
+
+| value | Annex 5 option | what goes through the curve |
+|---|---|---|
+| `ictcp` | 1 | I of ICtCp; CT and CP scaled by the ratio |
+| `ycbcr` | 2 | Y' of Y'CbCr; Cb and Cr scaled by the ratio |
+| `yrgb` | 3 | luminance Y; RGB scaled by the linear ratio |
+| `rgb` | 4 | each of R', G', B' on its own |
+| `maxrgb` | 5 | max(R, G, B); RGB scaled by the linear ratio |
+
+`ictcp` is the default: it compresses the intensity axis of the space BT.2100
+defines for exactly that separation, and scales the two chroma axes to follow.
+`yrgb` and `maxrgb` cost about a quarter of the arithmetic, because one value
+goes through PQ rather than three. `rgb` desaturates bright colours by
+construction, since each channel is compressed on its own and the largest one
+is compressed most.
+
+### Output
+
+Linear BT.2020 RGBS, scaled so `dst_max` is 1.0. `_Transfer` stays 8,
+`_Primaries` stays 9, `_Range` is written as 1.
+
+The properties that described the HDR content are removed, because it no
+longer exists: `MasteringDisplayMinLuminance`, `MasteringDisplayMaxLuminance`,
+`ContentLightLevelMax`, `ContentLightLevelAverage`, `DolbyVisionRPU` and
+`HDR10Plus`. The mastering primaries and white point stay, because `BT2407`
+reads them.
+
+Channels can exceed 1.0. In `ictcp`, `ycbcr` and `yrgb` the chroma scaling can
+put a channel several times above SDR white on saturated input, which is what
+Annex 5 means by a result outside the target colour volume, and `BT2407`
+accepts such input. All five representations also overshoot when `dst_min` is
+above `src_min`; see the next section.
+
+## tonemapper.BT2407
+
+```
+BT2407(clip clip, [data method="softclip", float beta=0.2,
+       data src_gamut="auto", int simd=1])
+```
+
+| parameter | default | meaning |
+|---|---|---|
+| `method` | `softclip` | `softclip` is the Annex 5 projection, `clip` is the matrix and hard clamp of section 2 |
+| `beta` | 0.2 | where the roll-off starts, in [0, 1). Annex 5's margin. Only used by `softclip` |
+| `src_gamut` | `auto` | `auto`, `bt2020` or `p3d65`. Only used by `softclip` |
+| `simd` | 1 | 0 runs the scalar reference instead |
+
+`softclip` takes each colour along the ray from the D65 white point through
+its own chromaticity, finds where that ray leaves the source gamut and where
+it leaves BT.709 at the same luminance, and rolls the distance off with the
+quadratic Bezier of Annex 5. Luminance is preserved, and so is the direction
+from white in u'v'. A colour less than `1 - beta` of the way from white to the
+BT.709 boundary comes through untouched, which is about a third of random
+in-gamut colours.
+
+Equation (5-4) of the report prints the bracket in the roll-off unsquared. As
+printed it evaluates to 3.17 where the function has to be 1, so the squared
+form is used, which is what the report's own construction, a quadratic Bezier
+extension, gives.
+
+### Source gamut
+
+BT.2407 section 3 notes that the content gamut is often much smaller than
+BT.2020, and that using it reduces how much compression is needed. So
+`src_gamut="auto"` reads the mastering display gamut from
+`MasteringDisplayPrimariesX`, `MasteringDisplayPrimariesY`,
+`MasteringDisplayWhitePointX` and `MasteringDisplayWhitePointY`, and falls
+back to BT.2020 when they are absent or fail validation. Most HDR is mastered
+on a P3 display, so this is not a rare path: it lets P3 boundary colours reach
+the BT.709 boundary instead of stopping short of it.
+
+The fallback is silent. The output property `TonemapSourceGamut` records what
+was actually used for the frame, `bt2020`, `p3d65` or `mastering`, so a script
+can tell.
+
+The projection white point is D65 in every case, and the source matrix is
+derived with D65 as its white, because both the container and the target are
+D65. The declared white point is validated and otherwise unused. Deriving with
+a declared non-D65 white would put D65 itself outside the source cube and
+collapse the roll-off into a hard clip.
+
+### Output
+
+Linear BT.709 RGBS with every channel in [0, 1]. `_Primaries` is set to 1,
+`_Transfer` stays 8, `_Range` is written as 1. The mastering primaries and
+white point properties are removed, and `TonemapSourceGamut` is added.
+
+## Behaviour at the edges
+
+These are the plugin's choices where the specifications stop short. They are
+listed so that nothing here is a surprise.
+
+- Input above the mastering peak is treated as the peak, and input below the
+  mastering black as black. Annex 5 defines the curve on [0, 1] only, and the
+  cubic is not monotone outside it.
+- A negative input channel is treated as black. Sign-preserving handling of
+  negative linear light is possible and is not implemented.
+- NaN and infinite samples are not supported input. The output for such a
+  pixel is unspecified and neither the filter nor the reference checks for
+  them, because a check per sample would cost every valid pixel.
+- With `dst_min` above `src_min` the black lift of step 4 raises the whole
+  curve, including its top. The output then exceeds `dst_max` by a factor of
+  b(1 - maxLum)^4, for instance 0.39% for a 1000 cd/m2 master, a 1 cd/m2
+  target black and a 203 cd/m2 target peak. Annex 5 has no output clamp and
+  the plugin adds none.
+- In `yrgb` and `maxrgb`, a pixel whose driving value is zero or negative has
+  no ratio to apply and takes the curve's own black, which is the same value
+  an exactly black input gets in the other three representations.
+- In `BT2407`, a pixel with luminance at or below 0 is black, a pixel at or
+  above 1 is white, and a pixel whose chromaticity is undefined, which needs a
+  large negative input channel, takes the hard clip. Those three apply in that
+  order. Luminance at or above 1 has to go somewhere: the effective gamut
+  there is the white point alone, and the projection already converges on
+  white as luminance approaches 1, so white is the continuous choice. Pick the
+  `maxrgb` representation if you want chromaticity preserved instead; it never
+  produces luminance above 1.
+- A chromaticity beyond the effective source gamut lands on the BT.709
+  boundary. The report does not contemplate that input.
+
+## Accuracy
+
+The filters are tested against a float64 reference implementation of the same
+equations over a fixture set that includes saturated and out-of-volume
+colours. Measured over every fixture, the compiled filter is within one
+float32 ULP of the reference: at most 1.2e-7 absolute where the reference
+value is at or below SDR white, and at most 1.2e-7 relative where it is above
+1e-3. Those are the bounds the test suite gates on. The absolute bound stops
+at SDR white because half a float32 ULP passes it at about 17 times that
+value, so above there storage alone would decide the result.
+
+The SIMD kernels are compared against the scalar ones on every instruction set
+in the DLL. Four of the five representations are bit-identical to the scalar
+path; `ictcp` differs by about 7e-12, one float32 ULP at the output, which is
+the fused multiply-add contraction its matrix chain allows.
+
+## Speed and memory
+
+Measured on a 16-core desktop at 4K, 32 threads. The full chain above,
+including both resize stages, runs at about 34 frames per second. The tone
+mapping filter alone costs 48 ns per pixel in `ictcp` and 18 ns per pixel in
+`yrgb` or `maxrgb`; the gamut filter costs 4 ns per pixel. `bench/results.md`
+carries the current numbers and the machine they came from.
+
+In an encode the filter is usually not what sets the pace. Piped into x265 at
+`medium` and CRF 18, the whole chain ran at 14.8 frames per second, so the
+tone mapping was a share of CPU time rather than the limit. Against a faster
+encoder, NVENC or a fast software preset, it becomes the limit.
+
+VapourSynth runs frames in parallel and a 4K RGBS frame is 100 MB, so the
+memory a chain needs scales with the thread count. The chain above peaked at
+7.3 GB with 32 threads. Lower `core.num_threads` or `core.max_cache_size` to
+trade throughput for memory.
+
+## Diagnostics
+
+`simd=0` on either filter runs the scalar reference path instead of the vector
+kernel. It exists so the test suite can compare the two, and as a way out if a
+machine ever disagrees with its own vector unit. It is not a tuning knob: the
+scalar path computes the same values and is up to five times slower.
+
+`tonemapper.Info()` reports what the plugin chose, which is worth including in
+a bug report:
+
+```python
+>>> core.tonemapper.Info()
+{'available_targets': ['AVX3_ZEN4', 'AVX3_DL', 'AVX3', 'AVX2', 'SSE4',
+ 'SSSE3', 'SSE2'], 'double_lanes': 8, 'ictcp_float32_lanes': 0,
+ 'target': 'AVX3_ZEN4'}
+```
+
+`available_targets` lists the kernels compiled into the DLL that this CPU can
+run, best first. `Info(target="AVX2")` restricts dispatch to one of them for
+the rest of the process and an empty string restores the automatic choice;
+that is a test hook, not something a script should need.
+`ictcp_float32_lanes` is 0 in every release build.
+
+## Known limitations
+
+- The BT.2407 projection shifts the hue of extremely saturated bright yellows.
+  The report states this weakness itself; it is not worked around.
+- The curve is static. Dynamic metadata, HDR10+ and Dolby Vision are not read,
+  and no scene or frame peak detection is done.
+- PQ input only. HLG needs a different conversion and is not implemented.
+- BT.709 output only. Of BT.2407 the plugin implements the Annex 5 projection
+  and the section 2 hard clip; Annexes 2 and 4, and perceptual gamut mappers
+  of other kinds, are not implemented.
+
+## Building
+
+A C++20 compiler, CMake 3.24 or later, Ninja, and a network connection for the
+first configure, which fetches Highway and SLEEF. The release is built with
+clang 22 targeting the MSVC ABI; MSVC and GCC should work too, and neither is
+tested.
+
+```sh
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+```
+
+The result is `build/tonemapper.dll`. The tests need the `uv` Python package
+manager and bring their own VapourSynth from PyPI, so no system install is
+involved:
+
+```sh
+uv run --project reference pytest
+```
+
+They skip themselves when the DLL is not built.
+
+## Sources
+
+The specifications, which are the authority for everything here:
+
+- ITU-R BT.2408: <https://www.itu.int/rec/R-REC-BT.2408/en> (Annex 5, the
+  EETF and the five representations)
+- ITU-R BT.2390: <https://www.itu.int/rec/R-REC-BT.2390/en> (the same curve,
+  with the reasoning behind it)
+- ITU-R BT.2100: <https://www.itu.int/rec/R-REC-BT.2100/en> (PQ, the
+  primaries, the ICtCp and Y'CbCr matrices)
+- ITU-R BT.2407: <https://www.itu.int/rec/R-REC-BT.2407/en> (gamut
+  conversion)
+- ITU-R BT.2087: <https://www.itu.int/rec/R-REC-BT.2087/en> (deriving the
+  matrices from primaries)
+
+Two independent implementations were used as numeric second opinions while
+building this, by comparing outputs:
+
+- hdr-toys: <https://github.com/natural-harmonia-gropius/hdr-toys>
+- libplacebo: <https://code.videolan.org/videolan/libplacebo>
+
+## Licence
+
+MIT; see `LICENSE`. `NOTICE` lists the third-party components and their
+licences: Google Highway and SLEEF are statically linked into the DLL, and the
+VapourSynth API headers are vendored under `include/vapoursynth/`.
