@@ -1,0 +1,53 @@
+version: 2
+
+# Highway and SLEEF are not here. They are fetched by CMake FetchContent at
+# configure time, which no dependabot ecosystem reads, so bumping them means
+# editing the two GIT_TAG lines in CMakeLists.txt by hand, rebuilding, running
+# the suite against every SIMD target, and re-reading NOTICE if a licence
+# changed. The vendored VapourSynth headers under include/vapoursynth are
+# pinned by hand for the same reason.
+
+updates:
+  # Python: the reference oracle, the test harness and the lint and type-check
+  # tools. A vapoursynth bump changes the core the tests run against; its
+  # version is a bare number, so dependabot reads any bump as major and sends
+  # it to review rather than grouping it.
+  - package-ecosystem: "uv"
+    directory: "/reference"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "python"
+    commit-message:
+      prefix: "deps"
+      include: "scope"
+    groups:
+      patch-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "patch"
+      minor-updates:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "ci"
+      include: "scope"
