@@ -11,3 +11,9 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.40.1",
+    "ruff>=0.16.7",
+]
