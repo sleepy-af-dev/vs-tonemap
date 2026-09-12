@@ -129,8 +129,8 @@ them without a strength knob, because the formulas are the point.
 
 `ictcp` is the default: it compresses the intensity axis of the space BT.2100
 defines for exactly that separation, and scales the two chroma axes to follow.
-`yrgb` and `maxrgb` cost about a quarter of the arithmetic, because one value
-goes through PQ rather than three. `rgb` desaturates bright colours by
+`yrgb` and `maxrgb` run about 2.6 times faster, 18 ns per pixel against 48,
+because one value goes through PQ rather than three. `rgb` desaturates bright colours by
 construction, since each channel is compressed on its own and the largest one
 is compressed most.
 
@@ -249,9 +249,11 @@ at SDR white because half a float32 ULP passes it at about 17 times that
 value, so above there storage alone would decide the result.
 
 The SIMD kernels are compared against the scalar ones on every instruction set
-in the DLL. Four of the five representations are bit-identical to the scalar
-path; `ictcp` differs by about 7e-12, one float32 ULP at the output, which is
-the fused multiply-add contraction its matrix chain allows.
+the test machine can run, seven of the eight in the DLL; the Sapphire Rapids
+kernel is compiled but untested. Four of the five representations are
+bit-identical to the scalar path. `ictcp` differs by about 7e-12 in double,
+which is the fused multiply-add contraction its matrix chain allows, and that
+difference flips at most one ULP of the float32 the frame stores.
 
 ## Speed and memory
 
@@ -293,6 +295,9 @@ run, best first. `Info(target="AVX2")` restricts dispatch to one of them for
 the rest of the process and an empty string restores the automatic choice;
 that is a test hook, not something a script should need.
 `ictcp_float32_lanes` is 0 in every release build.
+
+Both `simd` and `Info(target=...)` are diagnostics rather than part of the
+stable interface, and may change between releases.
 
 ## Known limitations
 
