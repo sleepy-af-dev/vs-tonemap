@@ -3,6 +3,7 @@
 
 # build output
 build/
+build-f32/
 out/
 compile_commands.json
 *.dll

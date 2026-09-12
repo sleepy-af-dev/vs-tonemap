@@ -5,10 +5,12 @@
 #include <VapourSynth4.h>
 
 #include <cmath>
+#include <cstring>
 #include <string>
 
 #include "bt2390.h"
 #include "bt2407.h"
+#include "simd.h"
 
 namespace {
 
@@ -37,6 +39,7 @@ struct FilterData {
     VSNode* node;
     VSVideoInfo vi;
     Representation rep;
+    bool simd;
     double nominal;
     double dstMin;
     double dstMax;
@@ -187,10 +190,11 @@ const VSFrame* VS_CC getFrame(int n, int activationReason, void* instanceData, v
         dstStride[p] = vsapi->getStride(dst, p) / static_cast<ptrdiff_t>(sizeof(float));
     }
     for (int y = 0; y < height; ++y) {
-        tonemapper::toneMapRow(srcPlane[0] + y * srcStride[0], srcPlane[1] + y * srcStride[1],
-                               srcPlane[2] + y * srcStride[2], dstPlane[0] + y * dstStride[0],
-                               dstPlane[1] + y * dstStride[1], dstPlane[2] + y * dstStride[2],
-                               static_cast<size_t>(width), d->rep, params);
+        const auto row = d->simd ? tonemapper::toneMapRowSimd : tonemapper::toneMapRow;
+        row(srcPlane[0] + y * srcStride[0], srcPlane[1] + y * srcStride[1],
+            srcPlane[2] + y * srcStride[2], dstPlane[0] + y * dstStride[0],
+            dstPlane[1] + y * dstStride[1], dstPlane[2] + y * dstStride[2],
+            static_cast<size_t>(width), d->rep, params);
     }
 
     VSMap* outProps = vsapi->getFramePropertiesRW(dst);
@@ -207,6 +211,15 @@ void VS_CC freeFilter(void* instanceData, VSCore*, const VSAPI* vsapi) {
     auto* d = static_cast<FilterData*>(instanceData);
     vsapi->freeNode(d->node);
     delete d;
+}
+
+// The SIMD kernels are checked against the scalar ones, which are the
+// reference, so both have to stay reachable. It doubles as a way out if a
+// machine ever disagrees with its own vector unit.
+bool optionalBool(const VSMap* in, const VSAPI* vsapi, const char* key, bool fallback) {
+    int err = 0;
+    const int64_t value = vsapi->mapGetInt(in, key, 0, &err);
+    return err == 0 ? value != 0 : fallback;
 }
 
 double optionalFloat(const VSMap* in, const VSAPI* vsapi, const char* key,
@@ -229,6 +242,7 @@ struct GamutFilterData {
     VSNode* node;
     VSVideoInfo vi;
     GamutMethod method;
+    bool simd;
     double beta;
     SourceGamut srcGamut;
 };
@@ -335,9 +349,9 @@ const VSFrame* VS_CC gamutGetFrame(int n, int activationReason, void* instanceDa
             dstPlane[p] =
                 reinterpret_cast<float*>(vsapi->getWritePtr(dst, p)) + y * dstStride;
         }
-        tonemapper::gamutMapRow(srcPlane[0], srcPlane[1], srcPlane[2], dstPlane[0],
-                                dstPlane[1], dstPlane[2], static_cast<size_t>(width),
-                                params);
+        const auto row = d->simd ? tonemapper::gamutMapRowSimd : tonemapper::gamutMapRow;
+        row(srcPlane[0], srcPlane[1], srcPlane[2], dstPlane[0], dstPlane[1], dstPlane[2],
+            static_cast<size_t>(width), params);
     }
 
     VSMap* outProps = vsapi->getFramePropertiesRW(dst);
@@ -363,6 +377,37 @@ void VS_CC gamutFreeFilter(void* instanceData, VSCore*, const VSAPI* vsapi) {
     delete d;
 }
 
+// What the plugin chose for this machine. The benchmark log records it, the
+// tests check dispatch landed where it should, and a bug report can say which
+// kernel ran without anyone having to guess.
+//
+// `target` restricts dispatch to one of the compiled targets for the rest of
+// the process, and an empty string restores the automatic choice. It is there
+// so the tests can compare every target the DLL ships against the scalar
+// reference, not only the one this machine picks.
+void VS_CC infoCreate(const VSMap* in, VSMap* out, void*, VSCore*, const VSAPI* vsapi) {
+    int err = 0;
+    const char* wanted = vsapi->mapGetData(in, "target", 0, &err);
+    if (err == 0 && !tonemapper::simdForceTarget(wanted)) {
+        vsapi->mapSetError(out, ("Info: this build has no target named " +
+                                 std::string(wanted) + " that this machine can run")
+                                    .c_str());
+        return;
+    }
+
+    const char* target = tonemapper::simdTargetName();
+    vsapi->mapSetData(out, "target", target, static_cast<int>(std::strlen(target)),
+                      dtUtf8, maReplace);
+    vsapi->mapSetInt(out, "ictcp_float32_lanes", tonemapper::ictcpUsesFloatLanes() ? 1 : 0,
+                     maReplace);
+    vsapi->mapSetInt(out, "double_lanes",
+                     static_cast<int64_t>(tonemapper::simdDoubleLanes()), maReplace);
+    for (const char* name : tonemapper::simdTargets()) {
+        vsapi->mapSetData(out, "available_targets", name,
+                          static_cast<int>(std::strlen(name)), dtUtf8, maAppend);
+    }
+}
+
 void VS_CC bt2407Create(const VSMap* in, VSMap* out, void*, VSCore* core,
                         const VSAPI* vsapi) {
     VSNode* node = vsapi->mapGetNode(in, "clip", 0, nullptr);
@@ -382,6 +427,7 @@ void VS_CC bt2407Create(const VSMap* in, VSMap* out, void*, VSCore* core,
     d->node = node;
     d->vi = *vi;
     d->beta = optionalFloat(in, vsapi, "beta", 0.2, nullptr);
+    d->simd = optionalBool(in, vsapi, "simd", true);
 
     int err = 0;
     const char* method = vsapi->mapGetData(in, "method", 0, &err);
@@ -435,6 +481,7 @@ void VS_CC bt2390Create(const VSMap* in, VSMap* out, void*, VSCore* core,
     d->dstMin = optionalFloat(in, vsapi, "dst_min", 0.0, nullptr);
     d->dstMax = optionalFloat(in, vsapi, "dst_max", 203.0, nullptr);
     d->nominal = optionalFloat(in, vsapi, "nominal_luminance", 100.0, nullptr);
+    d->simd = optionalBool(in, vsapi, "simd", true);
 
     int err = 0;
     const char* rep = vsapi->mapGetData(in, "representation", 0, &err);
@@ -488,13 +535,17 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
     vspapi->configPlugin("com.vstonemapper.plugin", "tonemapper",
                          "BT.2390 tone mapping and BT.2407 gamut conversion",
                          VS_MAKE_VERSION(0, 1), VAPOURSYNTH_API_VERSION, 0, plugin);
+    vspapi->registerFunction("Info", "target:data:opt;",
+                             "target:data;ictcp_float32_lanes:int;double_lanes:int;"
+                             "available_targets:data[];",
+                             infoCreate, nullptr, plugin);
     vspapi->registerFunction("BT2407",
                              "clip:vnode;method:data:opt;beta:float:opt;"
-                             "src_gamut:data:opt;",
+                             "src_gamut:data:opt;simd:int:opt;",
                              "clip:vnode;", bt2407Create, nullptr, plugin);
     vspapi->registerFunction("BT2390",
                              "clip:vnode;src_min:float:opt;src_max:float:opt;"
                              "dst_min:float:opt;dst_max:float:opt;"
-                             "nominal_luminance:float:opt;representation:data:opt;",
+                             "nominal_luminance:float:opt;representation:data:opt;simd:int:opt;",
                              "clip:vnode;", bt2390Create, nullptr, plugin);
 }
