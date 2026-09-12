@@ -236,15 +236,26 @@ def render_hdrtoys(rgb):
 
 
 def libplacebo_curve(code, curve, knee_offset=0.5):
-    """libplacebo's generalised BT.2390 curve, transcribed rather than copied.
+    """libplacebo's BT.2390 curve, transcribed from its bt2390() not copied.
 
-    It exposes the knee position as a parameter, KS = (1 + k) maxLum - k, and
-    BT.2390 prints the k = 0.5 instance. It also skips the black lift unless
-    minLum is positive, so it never expands blacks the way a target black
-    below the mastering black does here.
+    Three things differ from the report. The knee position is a parameter,
+    KS = (1 + k) maxLum - k, and BT.2390 prints the k = 0.5 instance. The black
+    lift takes the exponent min(1 / minLum, 4) rather than a fixed 4, which
+    only bites for a target black above a quarter of the source span. And the
+    lifted curve is then rescaled by a gain that puts the peak back on maxLum,
+    which the report does not do. The lift applies whatever the sign of
+    minLum, so black lands at PQ(Lmin) here exactly as it does in the report.
+
+    This is the curve before pl_tone_map_generate clamps the finished lookup
+    table to the output range, so what the stills compare is curve against
+    curve. The same transcription is tested in tests/test_oracles.py.
     """
     span = curve.pq_lw - curve.pq_lb
     ks = (1.0 + knee_offset) * curve.max_lum - knee_offset
+    bp = min(1.0 / curve.min_lum, 4.0) if curve.min_lum > 0.0 else 4.0
+    gain_inv = 1.0 + curve.min_lum / curve.max_lum * (1.0 - curve.max_lum) ** bp
+    gain = 1.0 / gain_inv if curve.max_lum < 1.0 else 1.0
+
     x = np.clip((np.asarray(code) - curve.pq_lb) / span, 0.0, 1.0)
     if ks < 1.0:
         t = np.clip((x - ks) / (1.0 - ks), 0.0, None)
@@ -255,8 +266,8 @@ def libplacebo_curve(code, curve, knee_offset=0.5):
             + (-2.0 * t3 + 3.0 * t2) * curve.max_lum
         )
         x = np.where(x >= ks, spline, x)
-    if curve.min_lum > 0.0:
-        x = x + curve.min_lum * (1.0 - x) ** 4
+    lifted = x + curve.min_lum * (1.0 - x) ** bp
+    x = np.where(x < 1.0, gain * (lifted - curve.min_lum) + curve.min_lum, x)
     return x * span + curve.pq_lb
 
 

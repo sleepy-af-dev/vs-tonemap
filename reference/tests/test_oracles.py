@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 import hdrtoys_port
-from bt2390_ref import Eetf, pq_inverse_eotf
+from bt2390_ref import Eetf, pq_eotf, pq_inverse_eotf
 
 CASES = [
     # LB, LW, Lmin, Lmax
@@ -49,19 +49,28 @@ def test_curve_matches_the_hdrtoys_port(lb, lw, lmin, lmax):
 
 
 def libplacebo_curve(e, pq_lb, pq_lw, pq_min, pq_max, knee_offset=0.5):
-    """The generalised BT.2390 curve libplacebo implements, transcribed.
+    """The BT.2390 curve libplacebo implements, transcribed from its bt2390().
 
-    It exposes the knee position as a parameter, KS = (1 + k) maxLum - k, so
-    that a caller can trade knee sharpness against highlight retention. BT.2390
-    prints the k = 0.5 instance. It also skips the black lift unless minLum is
-    positive, so it never expands blacks the way a target black below the
-    mastering black does here. Nothing is copied from libplacebo; only the
-    parameterisation is.
+    Three things differ from the report. The knee position is a parameter,
+    KS = (1 + k) maxLum - k, and BT.2390 prints the k = 0.5 instance. The black
+    lift takes the exponent min(1 / minLum, 4) rather than a fixed 4, which
+    only bites for a target black above a quarter of the source span. And the
+    lifted curve is then rescaled by a gain that puts the peak back on maxLum,
+    which the report does not do, so the two curves differ wherever minLum is
+    not zero. The lift itself applies whatever the sign of minLum, so black
+    lands at PQ(Lmin) here exactly as it does in the report.
+
+    This is the curve before pl_tone_map_generate clamps the finished lookup
+    table to the output range, which is what a comparison of curves wants.
+    Nothing is copied from libplacebo; only the parameterisation is.
     """
     span = pq_lw - pq_lb
     min_lum = (pq_min - pq_lb) / span
     max_lum = (pq_max - pq_lb) / span
     ks = (1.0 + knee_offset) * max_lum - knee_offset
+    bp = min(1.0 / min_lum, 4.0) if min_lum > 0.0 else 4.0
+    gain_inv = 1.0 + min_lum / max_lum * (1.0 - max_lum) ** bp
+    gain = 1.0 / gain_inv if max_lum < 1.0 else 1.0
 
     x = np.clip((np.asarray(e) - pq_lb) / span, 0.0, 1.0)
     if ks < 1.0:
@@ -73,16 +82,28 @@ def libplacebo_curve(e, pq_lb, pq_lw, pq_min, pq_max, knee_offset=0.5):
             + (-2.0 * t3 + 3.0 * t2) * max_lum
         )
         x = np.where(x >= ks, spline, x)
-    if min_lum > 0.0:
-        x = x + min_lum * (1.0 - x) ** 4
+    lifted = x + min_lum * (1.0 - x) ** bp
+    x = np.where(x < 1.0, gain * (lifted - min_lum) + min_lum, x)
     return x * span + pq_lb
 
 
-@pytest.mark.parametrize("lb,lw,lmin,lmax", [c for c in CASES if c[2] >= c[0]])
+def bt1886_codes(pq_values, lmax, levels=256):
+    """PQ code values as the integer levels a BT.1886 display would show.
+
+    The curves are compared in PQ, which is perceptual but not a display
+    quantity; this says what a difference there is worth once the result is
+    encoded for an SDR display.
+    """
+    v = pq_eotf(np.asarray(pq_values)) / lmax
+    return np.rint(np.clip(v, 0.0, 1.0) ** (1.0 / 2.4) * (levels - 1))
+
+
+@pytest.mark.parametrize("lb,lw,lmin,lmax", CASES)
 def test_curve_matches_the_libplacebo_form(lb, lw, lmin, lmax):
-    """Only where minLum is not negative, which is where the two agree by design."""
+    """Identical where the lift is idle, within an 8-bit code where it is not."""
     curve = Eetf(lb, lw, lmin, lmax)
     e = np.linspace(curve.pq_lb, curve.pq_lw, 200001)
+    ours = curve(e)
     theirs = libplacebo_curve(
         e,
         curve.pq_lb,
@@ -91,7 +112,16 @@ def test_curve_matches_the_libplacebo_form(lb, lw, lmin, lmax):
         float(pq_inverse_eotf(lmax)),
         knee_offset=0.5,
     )
-    assert np.max(np.abs(curve(e) - theirs)) < 1e-15
+    if curve.min_lum == 0.0:
+        assert np.max(np.abs(ours - theirs)) < 1e-15
+        return
+
+    # With a lift of either sign the two part company, because libplacebo
+    # rescales the lifted curve and the report does not. Black is the one
+    # point that still has to agree: both put E1 = 0 at PQ(Lmin).
+    assert abs(ours[0] - theirs[0]) < 1e-15
+    assert np.max(np.abs(ours - theirs)) < 3.5e-4
+    assert np.max(np.abs(bt1886_codes(ours, lmax) - bt1886_codes(theirs, lmax))) <= 1
 
 
 def test_a_different_knee_offset_is_a_different_curve():
