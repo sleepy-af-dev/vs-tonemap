@@ -89,6 +89,75 @@ inline void applyMatrix(const Mat3& a, T x, T y, T z, T* out0, T* out1, T* out2)
     *out2 = v2;
 }
 
+constexpr Mat3 multiply(const Mat3& a, const Mat3& b) {
+    Mat3 out{};
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            out.r[i][j] =
+                a.r[i][0] * b.r[0][j] + a.r[i][1] * b.r[1][j] + a.r[i][2] * b.r[2][j];
+        }
+    }
+    return out;
+}
+
+// --- Primaries, BT.2100-3 Table 2 and BT.709 -------------------------------
+
+struct Chromaticity {
+    double x;
+    double y;
+};
+
+struct Primaries {
+    Chromaticity r;
+    Chromaticity g;
+    Chromaticity b;
+};
+
+inline constexpr Chromaticity kD65 = {0.3127, 0.3290};
+inline constexpr Primaries kPrimariesBt2020 = {
+    {0.708, 0.292}, {0.170, 0.797}, {0.131, 0.046}};
+inline constexpr Primaries kPrimariesBt709 = {
+    {0.640, 0.330}, {0.300, 0.600}, {0.150, 0.060}};
+inline constexpr Primaries kPrimariesP3D65 = {
+    {0.680, 0.320}, {0.265, 0.690}, {0.150, 0.060}};
+
+// RGB to XYZ from primary and white chromaticities, by the BT.2087 method.
+// P holds the primaries as (x, y, 1 - x - y) columns; solving P s = W for the
+// white point as XYZ with Y = 1 gives the column scalings that put RGB
+// (1, 1, 1) on the white point.
+constexpr Mat3 rgbToXyz(const Primaries& p, const Chromaticity& w) {
+    const Mat3 columns = {{
+        {p.r.x, p.g.x, p.b.x},
+        {p.r.y, p.g.y, p.b.y},
+        {1.0 - p.r.x - p.r.y, 1.0 - p.g.x - p.g.y, 1.0 - p.b.x - p.b.y},
+    }};
+    const Mat3 back = inverse(columns);
+    const double white[3] = {w.x / w.y, 1.0, (1.0 - w.x - w.y) / w.y};
+
+    Mat3 out{};
+    for (int j = 0; j < 3; ++j) {
+        const double scale = back.r[j][0] * white[0] + back.r[j][1] * white[1] +
+                             back.r[j][2] * white[2];
+        for (int i = 0; i < 3; ++i) out.r[i][j] = columns.r[i][j] * scale;
+    }
+    return out;
+}
+
+inline constexpr Mat3 kRgb2020ToXyz = rgbToXyz(kPrimariesBt2020, kD65);
+inline constexpr Mat3 kRgb709ToXyz = rgbToXyz(kPrimariesBt709, kD65);
+inline constexpr Mat3 kXyzToRgb709 = inverse(kRgb709ToXyz);
+inline constexpr Mat3 kRgb2020ToRgb709 = multiply(kXyzToRgb709, kRgb2020ToXyz);
+
+// CIE 1976 u'v' of a chromaticity. u' = 4x / (-2x + 12y + 3) and
+// v' = 9y / (-2x + 12y + 3), which is equation (5-3) of BT.2407 rewritten
+// from XYZ into xy.
+constexpr Chromaticity xyToUv(const Chromaticity& c) {
+    const double d = -2.0 * c.x + 12.0 * c.y + 3.0;
+    return {4.0 * c.x / d, 9.0 * c.y / d};
+}
+
+inline constexpr Chromaticity kWhiteUv = xyToUv(kD65);
+
 inline constexpr Mat3 kRgb2020ToLms = {{
     {1688.0 / 4096.0, 2146.0 / 4096.0, 262.0 / 4096.0},
     {683.0 / 4096.0, 2951.0 / 4096.0, 462.0 / 4096.0},

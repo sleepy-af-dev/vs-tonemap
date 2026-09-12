@@ -245,6 +245,7 @@ def bt2390(
     dst_max=203.0,
     nominal_luminance=100.0,
     representation="ictcp",
+    curve=None,
 ):
     """Tone map linear BT.2020 RGB.
 
@@ -253,6 +254,10 @@ def bt2390(
     yrgb representations. rgb and maxrgb stay inside [0, 1] when dst_min is
     at or below src_min; a positive black lift takes all five above 1.0 by
     the Annex 5 overshoot, b (1 - maxLum)^4 in PQ.
+
+    curve replaces the EETF with another callable on PQ codes, which is how a
+    different implementation's tone curve is run through the same colour
+    handling so that the curve is the only thing that differs.
     """
     if representation not in REPRESENTATIONS:
         raise ValueError(
@@ -262,7 +267,8 @@ def bt2390(
     if not np.isfinite(nominal_luminance) or nominal_luminance <= 0.0:
         raise ValueError("nominal_luminance must be positive")
 
-    curve = Eetf(src_min, src_max, dst_min, dst_max)
+    if curve is None:
+        curve = Eetf(src_min, src_max, dst_min, dst_max)
     rgb = np.clip(np.asarray(rgb, dtype=np.float64) * nominal_luminance, 0.0, PQ_PEAK)
     # What an exact-black input becomes: E1 is 0, so E4 is PQ(Lmin) and the
     # luminance is dst_min. The two ratio representations fall back on it.

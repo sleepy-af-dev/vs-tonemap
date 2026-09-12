@@ -23,7 +23,7 @@ FetchContent_Declare(highway
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(highway)
 
-add_library(tonemapper MODULE src/plugin.cpp src/bt2390.cpp)
+add_library(tonemapper MODULE src/plugin.cpp src/bt2390.cpp src/bt2407.cpp)
 set_target_properties(tonemapper PROPERTIES
   PREFIX ""
   CXX_VISIBILITY_PRESET hidden

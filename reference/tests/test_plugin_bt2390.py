@@ -1,123 +1,35 @@
 """The compiled BT2390 filter against the float64 oracle.
 
 The oracle is the expected value; the plugin is never its own reference. The
-gate is section 5 of the design: absolute error at most 1e-6 on output
-normalised to SDR white, and relative error at most 1e-5 where the oracle
-value exceeds 1e-3.
+two gates and the shared clip plumbing are in vsharness.
 """
 
 import math
-from pathlib import Path
 
 import numpy as np
 import pytest
 import vapoursynth as vs
 from bt2390_ref import REPRESENTATIONS, bt2390
-from fixtures import build
-
-# Two gates, because the fixture inputs are float64 and a clip can only carry
-# float32, so the filter never sees the fixture value exactly.
-#
-# The pipeline gate is section 5 as written: it measures the filter plus the
-# quantisation of its input, which is what a script actually gets.
-ABSOLUTE_GATE = 1e-6
-RELATIVE_GATE = 1e-5
-# The filter gate is the same comparison with the oracle re-run on the float32
-# the clip carries, so it measures only the arithmetic. Both numbers are one
-# float32 ULP. The absolute bound applies only at or below SDR white, because
-# above that a half-ULP of the float32 store is itself larger than 1e-6:
-# ycbcr reaches 32.6 times SDR white on these fixtures.
-FILTER_ABSOLUTE_GATE = 1.2e-7
-FILTER_RELATIVE_GATE = 1.2e-7
-ABSOLUTE_CEILING = 1.0
-RELATIVE_FLOOR = 1e-3
-
-PLUGIN = Path(__file__).resolve().parents[2] / "build" / "tonemapper.dll"
-
-core = vs.core
-
-
-@pytest.fixture(scope="session", autouse=True)
-def plugin():
-    if not PLUGIN.exists():
-        pytest.skip(f"{PLUGIN.name} is not built")
-    if not hasattr(core, "tonemapper"):
-        core.std.LoadPlugin(path=str(PLUGIN))
-    return core.tonemapper
-
-
-@pytest.fixture(scope="module")
-def fixtures():
-    return build()
-
-
-def make_clip(rows, props=None):
-    """A one-row RGBS clip carrying rows, an (N, 3) array, and props."""
-    rows = np.asarray(rows, dtype=np.float32)
-    blank = core.std.BlankClip(
-        format=vs.RGBS, width=rows.shape[0], height=1, length=1, keep=True
-    )
-
-    def fill(n, f):
-        out = f.copy()
-        for plane in range(3):
-            np.asarray(out[plane])[0, :] = rows[:, plane]
-        return out
-
-    clip = core.std.ModifyFrame(blank, blank, fill)
-    return core.std.SetFrameProps(clip, **props) if props else clip
-
-
-def run(clip):
-    """The filter's output as an (N, 3) float64 array, plus the frame props."""
-    frame = clip.get_frame(0)
-    rows = np.stack([np.asarray(frame[p])[0, :] for p in range(3)], axis=-1)
-    return rows.astype(np.float64), dict(frame.props)
-
-
-def error_stats(got, expected):
-    """Absolute error at or below SDR white, relative error above the floor.
-
-    The two cover different parts of the range. Scoping the absolute one is
-    what keeps it meaningful: the output is stored as float32, whose half-ULP
-    at value v is v times 2^-24, so an absolute bound of 1e-6 is unreachable
-    above v = 16.8 whatever the arithmetic does.
-    """
-    error = np.abs(got - expected)
-    absolute = np.where(np.abs(expected) <= ABSOLUTE_CEILING, error, 0.0)
-    big = np.abs(expected) > RELATIVE_FLOOR
-    relative = np.zeros_like(error)
-    relative[big] = error[big] / np.abs(expected[big])
-    return absolute, relative
-
-
-def float32_ulp_distance(got, expected):
-    """How many representable float32 steps apart the two values are.
-
-    Ordering the bit patterns this way is monotone across zero and through
-    the denormals, which a division by np.spacing is not.
-    """
-
-    def ordered(x):
-        bits = np.asarray(x, dtype=np.float32).view(np.int32).astype(np.int64)
-        return np.where(bits < 0, np.int64(-(2**31)) - bits, bits)
-
-    return np.abs(ordered(got) - ordered(expected))
-
+from vsharness import (
+    ABSOLUTE_GATE,
+    GATES,
+    LINEAR_BT2020,
+    RELATIVE_GATE,
+    core,
+    error_stats,
+    evaluate,
+    make_clip,
+    report_errors,
+    run,
+    ulp_columns,
+)
 
 # The mastering metadata of the test clip, as a source filter attaches it.
-MASTERED = {
-    "MasteringDisplayMinLuminance": 0.0001,
-    "MasteringDisplayMaxLuminance": 1000.0,
-    "_Transfer": 8,
-    "_Primaries": 9,
-    "_Range": 1,
-}
-
-
-def case_props(params):
-    """Only the tags. The luminances go in as arguments unless a test says so."""
-    return {"_Transfer": 8, "_Primaries": 9, "_Range": 1}
+MASTERED = dict(
+    LINEAR_BT2020,
+    MasteringDisplayMinLuminance=0.0001,
+    MasteringDisplayMaxLuminance=1000.0,
+)
 
 
 def filter_args(params, representation):
@@ -144,7 +56,7 @@ def test_every_case_meets_the_accuracy_gate(
         rows = arrays[f"tm/{name}/in"]
         got, _ = run(
             plugin.BT2390(
-                make_clip(rows, case_props(params)),
+                make_clip(rows, LINEAR_BT2020),
                 **filter_args(params, representation),
             )
         )
@@ -162,61 +74,18 @@ def test_every_case_meets_the_accuracy_gate(
                 **{k: v for k, v in params.items()},
             ),
         }
-        gates = {
-            "pipeline": (ABSOLUTE_GATE, RELATIVE_GATE),
-            "filter": (FILTER_ABSOLUTE_GATE, FILTER_RELATIVE_GATE),
-        }
         row = [name]
         for which, expected in against.items():
             absolute, relative = error_stats(got, expected)
             worst[which][0] = max(worst[which][0], float(absolute.max()))
             worst[which][1] = max(worst[which][1], float(relative.max()))
             row += [float(absolute.max()), float(relative.max())]
-            assert absolute.max() <= gates[which][0], (name, which)
-            assert relative.max() <= gates[which][1], (name, which)
+            assert absolute.max() <= GATES[which][0], (name, which)
+            assert relative.max() <= GATES[which][1], (name, which)
         report.append(row)
-        ulps.append(
-            np.stack(
-                [
-                    float32_ulp_distance(got, against["filter"]).ravel(),
-                    np.abs(against["filter"]).ravel(),
-                    np.abs(got - against["filter"]).ravel(),
-                ]
-            )
-        )
+        ulps.append(ulp_columns(got, against["filter"]))
 
-    print(f"\n{representation}: error against the float64 oracle")
-    print(f"  {'':16}{'pipeline (float32 in)':>26}{'filter alone':>26}")
-    print(f"  {'case':<16}{'max abs':>13}{'max rel':>13}{'max abs':>13}{'max rel':>13}")
-    for name, pa, pr, fa, fr in report:
-        print(f"  {name:<16}{pa:>13.3e}{pr:>13.3e}{fa:>13.3e}{fr:>13.3e}")
-    print(
-        f"  {'worst':<16}{worst['pipeline'][0]:>13.3e}{worst['pipeline'][1]:>13.3e}"
-        f"{worst['filter'][0]:>13.3e}{worst['filter'][1]:>13.3e}"
-    )
-    print(
-        f"  twice the measured maximum: pipeline "
-        f"{2 * worst['pipeline'][0]:.3e} / {2 * worst['pipeline'][1]:.3e}, "
-        f"filter {2 * worst['filter'][0]:.3e} / {2 * worst['filter'][1]:.3e}"
-    )
-
-    # Section 5 asks for this for information only; nothing is gated on it.
-    # A ULP distance is meaningless where both values are cancellation noise
-    # around zero, so the histogram covers what an output format can resolve
-    # and the rest is reported as an absolute number.
-    steps, magnitude, absolute = np.concatenate(ulps, axis=1)
-    floor = 1e-6  # a fifteenth of a 16-bit step at SDR white
-    big = magnitude > floor
-    print(f"  filter vs oracle in float32 ULP, {int(big.sum())} values above {floor:g}:")
-    for edge in (0, 1, 2, 4):
-        print(f"    <= {edge:>2} ULP  {float((steps[big] <= edge).mean()) * 100.0:6.2f}%")
-    print(f"    max      {int(steps[big].max())} ULP")
-    print(
-        f"  the other {int((~big).sum())} values are cancellation noise around zero: "
-        f"largest magnitude {magnitude[~big].max():.2e}, "
-        f"largest difference {absolute[~big].max():.2e}"
-    )
-
+    report_errors(representation, report, worst, ulps)
     record_property("max_absolute", worst["filter"][0])
     record_property("max_relative", worst["filter"][1])
 
@@ -290,11 +159,6 @@ def test_output_properties(plugin):
 # --- Error cases, section 4.1 ----------------------------------------------
 
 
-def evaluate(clip):
-    """Force evaluation so a per-frame error surfaces as an exception."""
-    clip.get_frame(0)
-
-
 @pytest.mark.parametrize(
     "clip_format", [vs.YUV420P10, vs.RGB24, vs.RGBH, vs.GRAYS], ids=str
 )
@@ -316,7 +180,7 @@ def test_a_variable_format_clip_is_rejected(plugin):
 
 
 def test_missing_mastering_metadata_is_an_error(plugin):
-    clip = make_clip(np.full((4, 3), 0.5), case_props(None))
+    clip = make_clip(np.full((4, 3), 0.5), LINEAR_BT2020)
     with pytest.raises(vs.Error, match="src_max"):
         evaluate(plugin.BT2390(clip))
     with pytest.raises(vs.Error, match="src_min"):
@@ -334,7 +198,7 @@ def test_an_unusable_mastering_peak_counts_as_absent(plugin, value):
     clip = make_clip(
         np.full((4, 3), 0.5),
         dict(
-            case_props(None),
+            LINEAR_BT2020,
             MasteringDisplayMinLuminance=0.0,
             MasteringDisplayMaxLuminance=value,
         ),
@@ -347,7 +211,7 @@ def test_a_zero_mastering_black_is_valid(plugin):
     clip = make_clip(
         np.full((4, 3), 0.5),
         dict(
-            case_props(None),
+            LINEAR_BT2020,
             MasteringDisplayMinLuminance=0.0,
             MasteringDisplayMaxLuminance=1000.0,
         ),
@@ -390,7 +254,7 @@ def test_a_mastering_luminance_written_as_an_integer_is_read(plugin):
     clip = make_clip(
         np.full((4, 3), 0.5),
         dict(
-            case_props(None),
+            LINEAR_BT2020,
             MasteringDisplayMinLuminance=0,
             MasteringDisplayMaxLuminance=1000,
         ),
@@ -502,7 +366,7 @@ def test_property_derived_failures_name_the_property(plugin, mastering, kwargs, 
     clip = make_clip(
         np.full((4, 3), 0.5),
         dict(
-            case_props(None),
+            LINEAR_BT2020,
             MasteringDisplayMinLuminance=low,
             MasteringDisplayMaxLuminance=high,
         ),
@@ -564,7 +428,7 @@ def test_the_filter_survives_a_multi_row_frame(plugin, fixtures):
         return out
 
     clip = core.std.SetFrameProps(
-        core.std.ModifyFrame(blank, blank, fill), **case_props(params)
+        core.std.ModifyFrame(blank, blank, fill), **LINEAR_BT2020
     )
     frame = plugin.BT2390(clip, **filter_args(params, "ictcp")).get_frame(0)
     got = np.stack([np.asarray(frame[p]) for p in range(3)], axis=-1).astype(np.float64)

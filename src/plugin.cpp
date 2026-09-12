@@ -8,6 +8,7 @@
 #include <string>
 
 #include "bt2390.h"
+#include "bt2407.h"
 
 namespace {
 
@@ -216,6 +217,201 @@ double optionalFloat(const VSMap* in, const VSAPI* vsapi, const char* key,
     return err == 0 ? value : fallback;
 }
 
+// --- BT2407 ----------------------------------------------------------------
+
+using tonemapper::Chromaticity;
+using tonemapper::GamutMethod;
+using tonemapper::GamutParams;
+using tonemapper::Primaries;
+using tonemapper::SourceGamut;
+
+struct GamutFilterData {
+    VSNode* node;
+    VSVideoInfo vi;
+    GamutMethod method;
+    double beta;
+    SourceGamut srcGamut;
+};
+
+// One element of a property, as a float or as an integer. Source filters write
+// chromaticities as floats, but a hand-written SetFrameProps call turns a
+// whole number into an integer property.
+bool readNumber(const VSMap* props, const VSAPI* vsapi, const char* key, int index,
+                double* out) {
+    int err = 0;
+    double value = vsapi->mapGetFloat(props, key, index, &err);
+    if (err == peType) {
+        value = static_cast<double>(vsapi->mapGetInt(props, key, index, &err));
+    }
+    if (err != 0) return false;
+    *out = value;
+    return true;
+}
+
+// The mastering display gamut from the frame properties, or false. Anything
+// missing, unreadable or failing validation counts as absent, and the caller
+// falls back to BT.2020; TonemapSourceGamut is the only signal that happened.
+bool masteringPrimaries(const VSMap* props, const VSAPI* vsapi, Primaries* out) {
+    if (vsapi->mapNumElements(props, "MasteringDisplayPrimariesX") != 3) return false;
+    if (vsapi->mapNumElements(props, "MasteringDisplayPrimariesY") != 3) return false;
+
+    double xs[3];
+    double ys[3];
+    for (int i = 0; i < 3; ++i) {
+        if (!readNumber(props, vsapi, "MasteringDisplayPrimariesX", i, &xs[i])) return false;
+        if (!readNumber(props, vsapi, "MasteringDisplayPrimariesY", i, &ys[i])) return false;
+    }
+    Chromaticity white{};
+    if (!readNumber(props, vsapi, "MasteringDisplayWhitePointX", 0, &white.x)) return false;
+    if (!readNumber(props, vsapi, "MasteringDisplayWhitePointY", 0, &white.y)) return false;
+
+    const Primaries found = {{xs[0], ys[0]}, {xs[1], ys[1]}, {xs[2], ys[2]}};
+    if (!tonemapper::validGamut(found, white)) return false;
+    *out = found;
+    return true;
+}
+
+std::string resolveGamutParams(const GamutFilterData* d, const VSMap* props,
+                               const VSAPI* vsapi, GamutParams* out) {
+    const std::string bad = checkFrameTags(props, vsapi);
+    if (!bad.empty()) return bad;
+
+    out->method = d->method;
+    out->beta = d->beta;
+
+    Primaries primaries = tonemapper::kPrimariesBt2020;
+    out->label = "bt2020";
+    if (d->srcGamut == SourceGamut::P3D65) {
+        primaries = tonemapper::kPrimariesP3D65;
+        out->label = "p3d65";
+    } else if (d->srcGamut == SourceGamut::Auto &&
+               masteringPrimaries(props, vsapi, &primaries)) {
+        out->label = "mastering";
+    }
+    // The hard clip has no source gamut, so it reports the default whatever
+    // was asked for. Deriving the matrix costs a 3x3 inverse per frame against
+    // millions of pixels, so it is not cached: a cache would be shared mutable
+    // state in a filter declared parallel, for no measurable gain.
+    if (d->method == GamutMethod::Clip) out->label = "bt2020";
+    out->xyzToSource = tonemapper::inverse(tonemapper::rgbToXyz(primaries, tonemapper::kD65));
+    return std::string();
+}
+
+const VSFrame* VS_CC gamutGetFrame(int n, int activationReason, void* instanceData,
+                                   void**, VSFrameContext* frameCtx, VSCore* core,
+                                   const VSAPI* vsapi) {
+    auto* d = static_cast<GamutFilterData*>(instanceData);
+    if (activationReason == arInitial) {
+        vsapi->requestFrameFilter(n, d->node, frameCtx);
+        return nullptr;
+    }
+    if (activationReason != arAllFramesReady) return nullptr;
+
+    const VSFrame* src = vsapi->getFrameFilter(n, d->node, frameCtx);
+
+    GamutParams params{};
+    const std::string bad =
+        resolveGamutParams(d, vsapi->getFramePropertiesRO(src), vsapi, &params);
+    if (!bad.empty()) {
+        vsapi->setFilterError(("BT2407: " + bad).c_str(), frameCtx);
+        vsapi->freeFrame(src);
+        return nullptr;
+    }
+
+    const int width = vsapi->getFrameWidth(src, 0);
+    const int height = vsapi->getFrameHeight(src, 0);
+    VSFrame* dst = vsapi->newVideoFrame(&d->vi.format, width, height, src, core);
+
+    for (int y = 0; y < height; ++y) {
+        const float* srcPlane[3];
+        float* dstPlane[3];
+        for (int p = 0; p < 3; ++p) {
+            const ptrdiff_t srcStride =
+                vsapi->getStride(src, p) / static_cast<ptrdiff_t>(sizeof(float));
+            const ptrdiff_t dstStride =
+                vsapi->getStride(dst, p) / static_cast<ptrdiff_t>(sizeof(float));
+            srcPlane[p] =
+                reinterpret_cast<const float*>(vsapi->getReadPtr(src, p)) + y * srcStride;
+            dstPlane[p] =
+                reinterpret_cast<float*>(vsapi->getWritePtr(dst, p)) + y * dstStride;
+        }
+        tonemapper::gamutMapRow(srcPlane[0], srcPlane[1], srcPlane[2], dstPlane[0],
+                                dstPlane[1], dstPlane[2], static_cast<size_t>(width),
+                                params);
+    }
+
+    VSMap* outProps = vsapi->getFramePropertiesRW(dst);
+    // The primaries and white point described the source gamut, which the
+    // output no longer has.
+    for (const char* key : {"MasteringDisplayPrimariesX", "MasteringDisplayPrimariesY",
+                            "MasteringDisplayWhitePointX", "MasteringDisplayWhitePointY"}) {
+        vsapi->mapDeleteKey(outProps, key);
+    }
+    vsapi->mapSetInt(outProps, "_Primaries", VSC_PRIMARIES_BT709, maReplace);
+    vsapi->mapSetInt(outProps, "_Transfer", VSC_TRANSFER_LINEAR, maReplace);
+    vsapi->mapSetInt(outProps, "_Range", kRangeFull, maReplace);
+    vsapi->mapSetData(outProps, "TonemapSourceGamut", params.label,
+                      static_cast<int>(std::strlen(params.label)), dtUtf8, maReplace);
+
+    vsapi->freeFrame(src);
+    return dst;
+}
+
+void VS_CC gamutFreeFilter(void* instanceData, VSCore*, const VSAPI* vsapi) {
+    auto* d = static_cast<GamutFilterData*>(instanceData);
+    vsapi->freeNode(d->node);
+    delete d;
+}
+
+void VS_CC bt2407Create(const VSMap* in, VSMap* out, void*, VSCore* core,
+                        const VSAPI* vsapi) {
+    VSNode* node = vsapi->mapGetNode(in, "clip", 0, nullptr);
+    auto fail = [&](const std::string& message) {
+        vsapi->mapSetError(out, ("BT2407: " + message).c_str());
+        vsapi->freeNode(node);
+    };
+
+    const VSVideoInfo* vi = vsapi->getVideoInfo(node);
+    if (!isRgbs(vi)) {
+        fail("clip must be RGBS, that is 32-bit float RGB with a constant format "
+             "and constant dimensions");
+        return;
+    }
+
+    auto* d = new GamutFilterData{};
+    d->node = node;
+    d->vi = *vi;
+    d->beta = optionalFloat(in, vsapi, "beta", 0.2, nullptr);
+
+    int err = 0;
+    const char* method = vsapi->mapGetData(in, "method", 0, &err);
+    if (err != 0) method = "softclip";
+    const char* gamut = vsapi->mapGetData(in, "src_gamut", 0, &err);
+    if (err != 0) gamut = "auto";
+
+    // Both are checked whatever the method, so a typo in one is not swallowed
+    // by the other choosing a path that ignores it.
+    std::string bad;
+    if (!tonemapper::parseGamutMethod(method, &d->method)) {
+        bad = "method must be one of " + std::string(tonemapper::gamutMethodNames()) +
+              ", got " + method;
+    } else if (!tonemapper::parseSourceGamut(gamut, &d->srcGamut)) {
+        bad = "src_gamut must be one of " + std::string(tonemapper::sourceGamutNames()) +
+              ", got " + gamut;
+    } else if (!std::isfinite(d->beta) || d->beta < 0.0 || d->beta >= 1.0) {
+        bad = "beta must be in [0, 1)";
+    }
+    if (!bad.empty()) {
+        delete d;
+        fail(bad);
+        return;
+    }
+
+    VSFilterDependency deps[] = {{node, rpStrictSpatial}};
+    vsapi->createVideoFilter(out, "BT2407", &d->vi, gamutGetFrame, gamutFreeFilter,
+                             fmParallel, deps, 1, d, core);
+}
+
 void VS_CC bt2390Create(const VSMap* in, VSMap* out, void*, VSCore* core,
                         const VSAPI* vsapi) {
     VSNode* node = vsapi->mapGetNode(in, "clip", 0, nullptr);
@@ -292,6 +488,10 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
     vspapi->configPlugin("com.vstonemapper.plugin", "tonemapper",
                          "BT.2390 tone mapping and BT.2407 gamut conversion",
                          VS_MAKE_VERSION(0, 1), VAPOURSYNTH_API_VERSION, 0, plugin);
+    vspapi->registerFunction("BT2407",
+                             "clip:vnode;method:data:opt;beta:float:opt;"
+                             "src_gamut:data:opt;",
+                             "clip:vnode;", bt2407Create, nullptr, plugin);
     vspapi->registerFunction("BT2390",
                              "clip:vnode;src_min:float:opt;src_max:float:opt;"
                              "dst_min:float:opt;dst_max:float:opt;"
