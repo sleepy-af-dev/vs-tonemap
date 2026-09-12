@@ -167,7 +167,9 @@ def full_chain(core, clip, representation="ictcp"):
         nominal_luminance=100,
     )
     sdr = core.tonemapper.BT2407(
-        core.tonemapper.BT2390(lin, representation=representation, nominal_luminance=100)
+        core.tonemapper.BT2390(
+            lin, representation=representation, nominal_luminance=100
+        )
     )
     return core.resize.Bicubic(
         sdr, format=vs.YUV420P10, matrix_s="709", transfer_s="709", primaries_s="709"
@@ -250,7 +252,10 @@ def sweep(core, frame, frames_one, frames_many, threads):
     rows = []
     stages = [("tone", r) for r in REPRESENTATIONS] + [("gamut", m) for m in METHODS]
     for stage in stages:
-        entry = {"filter": "BT2390" if stage[0] == "tone" else "BT2407", "path": stage[1]}
+        entry = {
+            "filter": "BT2390" if stage[0] == "tone" else "BT2407",
+            "path": stage[1],
+        }
         for simd in (0, 1):
             one = run_case(core, stage, frame, frames_one, 1, simd)
             many = run_case(core, stage, frame, frames_many, threads, simd)
@@ -350,7 +355,9 @@ def main():
     parser.add_argument("--simd", type=int, default=1)
     parser.add_argument("--sweep", action="store_true", help="every path, both ways")
     parser.add_argument(
-        "--chain", action="store_true", help="only the end-to-end pass, as one JSON line"
+        "--chain",
+        action="store_true",
+        help="only the end-to-end pass, as one JSON line",
     )
     parser.add_argument("--write", action="store_true", help="write bench/results.md")
     parser.add_argument("--dll", default=None, help="load a different build")

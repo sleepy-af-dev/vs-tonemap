@@ -7,6 +7,7 @@ invariants Annex 5 claims for it.
 
 import numpy as np
 import pytest
+
 from bt2390_ref import (
     D65,
     PRIMARIES_BT709,
@@ -93,7 +94,8 @@ def test_achromatic_ray_never_leaves_the_gamut():
 def test_alpha_is_non_negative_with_bt2020_as_source():
     y, du, dv = random_rays(23)
     alpha = (
-        boundary_t(XYZ_TO_RGB2020, y, du, dv) / boundary_t(XYZ_TO_RGB709, y, du, dv) - 1.0
+        boundary_t(XYZ_TO_RGB2020, y, du, dv) / boundary_t(XYZ_TO_RGB709, y, du, dv)
+        - 1.0
     )
     assert alpha.min() >= 0.0
     assert alpha.min() == pytest.approx(0.048, abs=0.01)
@@ -349,7 +351,8 @@ def test_alpha_stays_positive_up_to_the_top_of_the_range():
     for y in (0.5, 0.85, 0.9, 0.99):
         y = np.float64(y)
         alpha = (
-            boundary_t(xyz_to_p3, y, du, dv) / boundary_t(XYZ_TO_RGB709, y, du, dv) - 1.0
+            boundary_t(xyz_to_p3, y, du, dv) / boundary_t(XYZ_TO_RGB709, y, du, dv)
+            - 1.0
         )
         assert float(alpha) > 0.0, y
 

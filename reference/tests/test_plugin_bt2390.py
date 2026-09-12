@@ -9,6 +9,7 @@ import math
 import numpy as np
 import pytest
 import vapoursynth as vs
+
 from bt2390_ref import REPRESENTATIONS, bt2390
 from vsharness import (
     ABSOLUTE_GATE,
@@ -119,7 +120,9 @@ def test_an_argument_overrides_the_property(plugin, fixtures):
     # MASTERED says 1000 and 0.0001. Both arguments differ from the property,
     # so a filter that quietly preferred the property would fail here.
     assert MASTERED["MasteringDisplayMaxLuminance"] != 737.0
-    got, _ = run(plugin.BT2390(make_clip(rows, MASTERED), src_max=737.0, src_min=0.0001))
+    got, _ = run(
+        plugin.BT2390(make_clip(rows, MASTERED), src_max=737.0, src_min=0.0001)
+    )
     absolute, _ = error_stats(got, arrays["tm/maxcll_737/ictcp"])
     assert absolute.max() <= ABSOLUTE_GATE
 
@@ -264,7 +267,9 @@ def test_a_mastering_luminance_written_as_an_integer_is_read(plugin):
 
 def test_absent_tags_are_accepted(plugin):
     """Consistency is demanded, tagging is not."""
-    evaluate(plugin.BT2390(make_clip(np.full((4, 3), 0.5)), src_min=0.0, src_max=1000.0))
+    evaluate(
+        plugin.BT2390(make_clip(np.full((4, 3), 0.5)), src_min=0.0, src_max=1000.0)
+    )
 
 
 @pytest.mark.filterwarnings("ignore:The _ColorRange frame property")
@@ -360,7 +365,9 @@ def test_parameter_errors_are_caught_at_script_time(plugin, kwargs, expected):
         ((203.0, float(np.nextafter(203.0, 1e4))), {}, "no width"),
     ],
 )
-def test_property_derived_failures_name_the_property(plugin, mastering, kwargs, expected):
+def test_property_derived_failures_name_the_property(
+    plugin, mastering, kwargs, expected
+):
     """The checks that need a property run per frame and report its name."""
     low, high = mastering
     clip = make_clip(

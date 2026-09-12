@@ -116,9 +116,13 @@ def report_errors(label, report, worst, ulps):
     steps, magnitude, absolute = np.concatenate(ulps, axis=1)
     floor = 1e-6  # a fifteenth of a 16-bit step at SDR white
     big = magnitude > floor
-    print(f"  filter vs oracle in float32 ULP, {int(big.sum())} values above {floor:g}:")
+    print(
+        f"  filter vs oracle in float32 ULP, {int(big.sum())} values above {floor:g}:"
+    )
     for edge in (0, 1, 2, 4):
-        print(f"    <= {edge:>2} ULP  {float((steps[big] <= edge).mean()) * 100.0:6.2f}%")
+        print(
+            f"    <= {edge:>2} ULP  {float((steps[big] <= edge).mean()) * 100.0:6.2f}%"
+        )
     print(f"    max      {int(steps[big].max())} ULP")
     if (~big).any():
         print(

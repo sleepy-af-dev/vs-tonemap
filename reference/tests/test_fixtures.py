@@ -7,6 +7,7 @@ the inputs really do contain the cases they are meant to cover.
 
 import numpy as np
 import pytest
+
 from bt2390_ref import (
     REPRESENTATIONS,
     RGB2020_TO_XYZ,

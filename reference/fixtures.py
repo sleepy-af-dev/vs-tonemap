@@ -13,6 +13,7 @@ The consumer decides how to shape them into a frame.
 """
 
 import numpy as np
+
 from bt2390_ref import (
     PRIMARIES_P3D65,
     REPRESENTATIONS,

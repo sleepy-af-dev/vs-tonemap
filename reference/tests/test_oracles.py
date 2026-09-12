@@ -5,9 +5,10 @@ truth, but three implementations agreeing on the same numbers rules out a
 transcription mistake in any one of them.
 """
 
-import hdrtoys_port
 import numpy as np
 import pytest
+
+import hdrtoys_port
 from bt2390_ref import Eetf, pq_inverse_eotf
 
 CASES = [
@@ -38,7 +39,9 @@ def test_curve_matches_the_hdrtoys_port(lb, lw, lmin, lmax):
     # The port clamps its result to [ob, ow]. A positive black lift pushes the
     # peak just above ow, so the two differ only where that clamp bites.
     overshoot = (
-        max(curve.min_lum, 0.0) * (1.0 - curve.max_lum) ** 4 * (curve.pq_lw - curve.pq_lb)
+        max(curve.min_lum, 0.0)
+        * (1.0 - curve.max_lum) ** 4
+        * (curve.pq_lw - curve.pq_lb)
     )
     assert np.max(np.abs(ours - theirs)) <= overshoot + 1e-15
     idle = ours <= float(pq_inverse_eotf(lmax))
@@ -113,7 +116,9 @@ def test_port_keeps_its_own_defaults():
     assert float(hdrtoys_port.get_max_i(p)) == float(pq_inverse_eotf(1000.0))
 
 
-@pytest.mark.parametrize("representation", ["ictcp", "ycbcr", "yrgb", "prergb", "maxrgb"])
+@pytest.mark.parametrize(
+    "representation", ["ictcp", "ycbcr", "yrgb", "prergb", "maxrgb"]
+)
 def test_port_runs_every_representation(representation):
     rng = np.random.default_rng(61)
     rgb = rng.random((512, 3)) * 5.0

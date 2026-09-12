@@ -10,6 +10,7 @@ from contextlib import contextmanager
 import numpy as np
 import pytest
 import vapoursynth as vs
+
 from bt2390_ref import REPRESENTATIONS
 from vsharness import (
     FILTER_ABSOLUTE_GATE,
@@ -206,13 +207,19 @@ def test_the_tail_of_a_row_is_handled(plugin, fixtures):
             for width in range(1, 20):
                 clip = make_clip(rows[:width], LINEAR_BT2020)
                 simd, _ = run(plugin.BT2390(clip, src_min=0.0, src_max=1000.0, simd=1))
-                scalar, _ = run(plugin.BT2390(clip, src_min=0.0, src_max=1000.0, simd=0))
-                assert np.abs(simd - scalar).max() <= FILTER_ABSOLUTE_GATE, (name, width)
+                scalar, _ = run(
+                    plugin.BT2390(clip, src_min=0.0, src_max=1000.0, simd=0)
+                )
+                assert np.abs(simd - scalar).max() <= FILTER_ABSOLUTE_GATE, (
+                    name,
+                    width,
+                )
 
 
 def test_a_multi_row_frame_matches_row_by_row(plugin, fixtures):
     """Stride handling: the second row must not read the first row's tail."""
     import vapoursynth as vs
+
     from vsharness import core
 
     _, arrays = fixtures

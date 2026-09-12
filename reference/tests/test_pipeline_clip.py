@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 import vapoursynth as vs
+
 from vsharness import core
 
 RESOURCES = Path(__file__).resolve().parents[2] / ".local" / "resources"
@@ -72,7 +73,9 @@ def to_linear(clip):
 
 def frame_rows(clip, n=0):
     frame = clip.get_frame(n)
-    return np.stack([np.asarray(frame[p]) for p in range(3)], axis=-1), dict(frame.props)
+    return np.stack([np.asarray(frame[p]) for p in range(3)], axis=-1), dict(
+        frame.props
+    )
 
 
 @pytest.mark.parametrize("indexer", AVAILABLE)

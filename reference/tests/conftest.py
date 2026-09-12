@@ -5,6 +5,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest  # noqa: E402
 import vapoursynth as vs  # noqa: E402
+
 from fixtures import build  # noqa: E402
 from vsharness import PLUGIN  # noqa: E402
 

@@ -4,9 +4,10 @@ Every assertion here is a property the ITU text states or that follows from
 it by derivation. The plugin is later held to the same numbers.
 """
 
-import hdrtoys_port
 import numpy as np
 import pytest
+
+import hdrtoys_port
 from bt2390_ref import (
     C1,
     C2,
@@ -154,7 +155,9 @@ def test_spline_endpoints_and_slopes():
     # dP/dE1 = (1 - T)^2: slope 1 at the knee, slope 0 at E1 = 1.
     e1 = np.linspace(ks, 1.0, 20001)
     h = 1e-7
-    slope = (normalised_curve(curve, e1 + h) - normalised_curve(curve, e1 - h)) / (2 * h)
+    slope = (normalised_curve(curve, e1 + h) - normalised_curve(curve, e1 - h)) / (
+        2 * h
+    )
     t = (e1 - ks) / (1.0 - ks)
     assert np.max(np.abs(slope - (1.0 - t) ** 2)) < 1e-6
     assert slope[0] == pytest.approx(1.0, abs=1e-6)
@@ -229,7 +232,9 @@ def test_knee_table():
     """LW 1000, Lmax 203, LB and Lmin 0."""
     curve = Eetf(0.0, 1000.0, 0.0, 203.0)
     assert curve.knee_luminance() == pytest.approx(87.8, abs=0.05)
-    assert float(pq_eotf(curve(pq_inverse_eotf(203.0)))) == pytest.approx(159.0, abs=0.05)
+    assert float(pq_eotf(curve(pq_inverse_eotf(203.0)))) == pytest.approx(
+        159.0, abs=0.05
+    )
     assert float(pq_eotf(curve(pq_inverse_eotf(1000.0)))) == pytest.approx(
         203.0, abs=1e-9
     )
@@ -246,7 +251,9 @@ def test_degenerate_range_never_evaluates_the_spline():
 def test_e1_is_clamped_to_the_domain():
     curve = Eetf(0.1, 1000.0, 0.0, 203.0)
     assert float(curve(pq_inverse_eotf(0.0))) == float(curve(pq_inverse_eotf(0.1)))
-    assert float(curve(pq_inverse_eotf(9000.0))) == float(curve(pq_inverse_eotf(1000.0)))
+    assert float(curve(pq_inverse_eotf(9000.0))) == float(
+        curve(pq_inverse_eotf(1000.0))
+    )
 
 
 @pytest.mark.parametrize(

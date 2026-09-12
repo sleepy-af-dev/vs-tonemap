@@ -8,6 +8,7 @@ the range.
 import numpy as np
 import pytest
 import vapoursynth as vs
+
 from bt2390_ref import PRIMARIES_BT2020, PRIMARIES_P3D65
 from bt2407_ref import bt2407
 from vsharness import (

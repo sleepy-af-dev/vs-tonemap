@@ -17,9 +17,10 @@ import struct
 import zlib
 from pathlib import Path
 
-import hdrtoys_port
 import numpy as np
 import vapoursynth as vs
+
+import hdrtoys_port
 from bt2390_ref import Eetf, bt2390, pq_inverse_eotf
 from bt2407_ref import clip as bt2407_clip
 
@@ -84,7 +85,11 @@ def encode_png(path, rgb):
 
 def open_clip(path):
     for name, dll, call in (
-        ("bs", "BestSource-R21-win64-msvc.dll", lambda p: core.bs.VideoSource(source=p)),
+        (
+            "bs",
+            "BestSource-R21-win64-msvc.dll",
+            lambda p: core.bs.VideoSource(source=p),
+        ),
         ("ffms2", "ffms2.dll", lambda p: core.ffms2.Source(source=p)),
         ("lsmas", "LSMASHSource.dll", lambda p: core.lsmas.LWLibavSource(source=p)),
     ):

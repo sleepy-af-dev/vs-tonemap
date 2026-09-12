@@ -11,3 +11,12 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[tool.ruff]
+# ruff's own default, stated so that a checkout formats the same way
+# everywhere. bench/ has no config of its own and takes the same value.
+line-length = 88
+# The oracle modules sit here and the harness sits in tests/, so both are
+# first-party and their imports group together rather than among the
+# installed packages.
+src = [".", "tests"]
