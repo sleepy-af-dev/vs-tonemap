@@ -1,0 +1,71 @@
+name: CI
+
+# Two jobs, split by whether a check needs the compiled plugin. Lint and the
+# type check read the Python sources only, so they run on Linux; the tests
+# load tonemapper.dll and so have to build it on Windows first.
+#
+# Both install from the lockfile with --locked, which fails if the lockfile
+# has drifted from pyproject.toml. The tool versions a run uses are therefore
+# the ones the lockfile names, and a new ruff release cannot turn an unchanged
+# tree red on its own.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --project reference
+      # ruff.toml and pyrightconfig.json are at the root, so both tools run
+      # from there rather than from inside the reference project.
+      - run: uv run --project reference ruff format --check reference bench
+      - run: uv run --project reference ruff check reference bench
+      - run: uv run --project reference basedpyright
+
+  test:
+    runs-on: windows-latest
+    # A cold build compiles Highway and SLEEF as well as the plugin. The cap
+    # is only here so a hung job cannot run for hours.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --project reference
+
+      # The compiler is named rather than left to CMake, which would find MSVC
+      # first. MSVC is untested here, and a job that built with it would go
+      # green on a binary the project has never validated. The runner image
+      # carries a standalone LLVM and Ninja, so neither needs installing.
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build build
+
+      # The SIMD tests iterate over the targets the CPU offers, so a runner
+      # without AVX-512 exercises fewer kernels than a machine that has it.
+      # The three real-clip tests skip: their footage is not in the repository.
+      - name: Test
+        run: uv run --project reference pytest reference -q
