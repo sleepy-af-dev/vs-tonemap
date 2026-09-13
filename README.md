@@ -407,3 +407,7 @@ building this, by comparing outputs:
 MIT; see `LICENSE`. `NOTICE` lists the third-party components and their
 licences: Google Highway and SLEEF are statically linked into the DLL, and the
 VapourSynth API headers are vendored under `include/vapoursynth/`.
+
+## Development
+
+Development of this project is supported by Claude Code.
