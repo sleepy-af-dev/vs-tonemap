@@ -62,9 +62,9 @@ def available_targets():
     """
     if not PLUGIN.exists():
         return []
-    if not hasattr(core, "tonemapper"):
+    if not hasattr(core, "tonemap"):
         core.std.LoadPlugin(path=str(PLUGIN))
-    names = core.tonemapper.Info()["available_targets"]
+    names = core.tonemap.Info()["available_targets"]
     # A one-element property comes back as the value itself.
     return [names] if isinstance(names, str) else list(names)
 

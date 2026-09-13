@@ -17,7 +17,7 @@ import vapoursynth as vs
 def check(tag: str, dll: str) -> int:
     core = vs.core
     core.std.LoadPlugin(str(Path(dll).resolve()))
-    built = core.tonemapper.Info()["version"]
+    built = core.tonemap.Info()["version"]
     claimed = tag.removeprefix("v")
     if built != claimed:
         print(f"::error::the plugin reports {built}, tag {tag} claims {claimed}")
@@ -28,5 +28,5 @@ def check(tag: str, dll: str) -> int:
 
 if __name__ == "__main__":
     if len(sys.argv) != 3:
-        raise SystemExit("usage: check_version.py <tag> <path to tonemapper.dll>")
+        raise SystemExit("usage: check_version.py <tag> <path to vs-tonemap.dll>")
     raise SystemExit(check(sys.argv[1], sys.argv[2]))

@@ -205,7 +205,7 @@ wheels = [
 ]
 
 [[package]]
-name = "vstonemapper-reference"
+name = "vstonemap-reference"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [

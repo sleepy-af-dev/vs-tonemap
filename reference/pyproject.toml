@@ -1,7 +1,7 @@
 [project]
-name = "vstonemapper-reference"
+name = "vstonemap-reference"
 version = "0.0.0"
-description = "float64 reference implementation and test harness for vs-tonemapper"
+description = "float64 reference implementation and test harness for vs-tonemap"
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2",

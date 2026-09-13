@@ -23,7 +23,7 @@
 #include "hwy/highway.h"
 
 HWY_BEFORE_NAMESPACE();
-namespace tonemapper {
+namespace tonemap {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 
@@ -45,11 +45,11 @@ namespace hn = hwy::HWY_NAMESPACE;
 // SLEEF's static library, which built every instruction set with its own
 // flags.
 
-#undef TONEMAPPER_HAVE_SLEEF
+#undef TONEMAP_HAVE_SLEEF
 
 #if HWY_TARGET == HWY_AVX3 || HWY_TARGET == HWY_AVX3_DL || \
     HWY_TARGET == HWY_AVX3_ZEN4 || HWY_TARGET == HWY_AVX3_SPR
-#define TONEMAPPER_HAVE_SLEEF 1
+#define TONEMAP_HAVE_SLEEF 1
 #ifndef __AVX512F__
 extern "C" __m512d Sleef_powd8_u10avx512f(__m512d, __m512d);
 extern "C" __m512 Sleef_powf16_u10avx512f(__m512, __m512);
@@ -61,7 +61,7 @@ HWY_INLINE hn::Vec512<float> SleefPow(hn::Vec512<float> x, hn::Vec512<float> y) 
     return hn::Vec512<float>{Sleef_powf16_u10avx512f(x.raw, y.raw)};
 }
 #elif HWY_TARGET == HWY_AVX2
-#define TONEMAPPER_HAVE_SLEEF 1
+#define TONEMAP_HAVE_SLEEF 1
 #ifndef __AVX__
 extern "C" __m256d Sleef_powd4_u10avx2(__m256d, __m256d);
 extern "C" __m256 Sleef_powf8_u10avx2(__m256, __m256);
@@ -73,7 +73,7 @@ HWY_INLINE hn::Vec256<float> SleefPow(hn::Vec256<float> x, hn::Vec256<float> y) 
     return hn::Vec256<float>{Sleef_powf8_u10avx2(x.raw, y.raw)};
 }
 #elif HWY_TARGET == HWY_SSE4
-#define TONEMAPPER_HAVE_SLEEF 1
+#define TONEMAP_HAVE_SLEEF 1
 HWY_INLINE hn::Vec128<double> SleefPow(hn::Vec128<double> x, hn::Vec128<double> y) {
     return hn::Vec128<double>{Sleef_powd2_u10sse4(x.raw, y.raw)};
 }
@@ -81,7 +81,7 @@ HWY_INLINE hn::Vec128<float> SleefPow(hn::Vec128<float> x, hn::Vec128<float> y) 
     return hn::Vec128<float>{Sleef_powf4_u10sse4(x.raw, y.raw)};
 }
 #elif HWY_TARGET == HWY_SSE2 || HWY_TARGET == HWY_SSSE3
-#define TONEMAPPER_HAVE_SLEEF 1
+#define TONEMAP_HAVE_SLEEF 1
 HWY_INLINE hn::Vec128<double> SleefPow(hn::Vec128<double> x, hn::Vec128<double> y) {
     return hn::Vec128<double>{Sleef_powd2_u10sse2(x.raw, y.raw)};
 }
@@ -105,7 +105,7 @@ HWY_INLINE V PowPerLane(D d, V x, V y) {
 
 template <class D, class V>
 HWY_INLINE V Pow(D d, V x, V y) {
-#ifdef TONEMAPPER_HAVE_SLEEF
+#ifdef TONEMAP_HAVE_SLEEF
     (void)d;
     return SleefPow(x, y);
 #else
@@ -409,7 +409,7 @@ void ToneMapRow(const float* srcR, const float* srcG, const float* srcB, float* 
                 const FrameParams& params) {
     switch (rep) {
         case Representation::Ictcp:
-#if TONEMAPPER_FLOAT32_ICTCP
+#if TONEMAP_FLOAT32_ICTCP
             ToneMapIctcp<float>(srcR, srcG, srcB, dstR, dstG, dstB, width, params);
 #else
             ToneMapIctcp<double>(srcR, srcG, srcB, dstR, dstG, dstB, width, params);
@@ -621,11 +621,11 @@ void GamutMapRow(const float* srcR, const float* srcG, const float* srcB, float*
 }
 
 }  // namespace HWY_NAMESPACE
-}  // namespace tonemapper
+}  // namespace tonemap
 HWY_AFTER_NAMESPACE();
 
 #if HWY_ONCE
-namespace tonemapper {
+namespace tonemap {
 
 HWY_EXPORT(ToneMapRow);
 HWY_EXPORT(GamutMapRow);
@@ -651,7 +651,7 @@ const char* simdTargetName() { return HWY_DYNAMIC_DISPATCH(TargetName)(); }
 size_t simdDoubleLanes() { return HWY_DYNAMIC_DISPATCH(DoubleLanes)(); }
 
 bool ictcpUsesFloatLanes() {
-#if TONEMAPPER_FLOAT32_ICTCP
+#if TONEMAP_FLOAT32_ICTCP
     return true;
 #else
     return false;
@@ -694,5 +694,5 @@ bool simdForceTarget(const char* name) {
     return true;
 }
 
-}  // namespace tonemapper
+}  // namespace tonemap
 #endif  // HWY_ONCE

@@ -37,7 +37,7 @@ import numpy as np
 import vapoursynth as vs
 
 ROOT = Path(__file__).resolve().parents[1]
-PLUGIN = ROOT / "build" / "tonemapper.dll"
+PLUGIN = ROOT / "build" / "vs-tonemap.dll"
 RESULTS = ROOT / "bench" / "results.md"
 WIDTH, HEIGHT = 3840, 2160
 PIXELS = WIDTH * HEIGHT
@@ -95,10 +95,10 @@ def build_chain(core, frames, frame, stage, simd):
     if kind == "source":
         return clip
     if kind == "tone":
-        return core.tonemapper.BT2390(
+        return core.tonemap.BT2390(
             clip, src_min=0.0, src_max=1000.0, representation=name, simd=simd
         )
-    return core.tonemapper.BT2407(clip, method=name, simd=simd)
+    return core.tonemap.BT2407(clip, method=name, simd=simd)
 
 
 def measure(core, stage, frames, threads, frame, simd):
@@ -167,10 +167,8 @@ def full_chain(core, clip, representation="ictcp"):
         primaries_s="2020",
         nominal_luminance=100,
     )
-    sdr = core.tonemapper.BT2407(
-        core.tonemapper.BT2390(
-            lin, representation=representation, nominal_luminance=100
-        )
+    sdr = core.tonemap.BT2407(
+        core.tonemap.BT2390(lin, representation=representation, nominal_luminance=100)
     )
     return core.resize.Bicubic(
         sdr, format=vs.YUV420P10, matrix_s="709", transfer_s="709", primaries_s="709"
@@ -238,7 +236,7 @@ def cpu_model():
 
 
 def environment(core):
-    info = core.tonemapper.Info()
+    info = core.tonemap.Info()
     return {
         "cpu": cpu_model(),
         "cores": os.cpu_count(),
@@ -378,7 +376,7 @@ def main():
     args = parser.parse_args()
 
     core: Any = vs.core  # the wheel's stub has no plugin namespaces
-    if not hasattr(core, "tonemapper"):
+    if not hasattr(core, "tonemap"):
         core.std.LoadPlugin(path=str(Path(args.dll) if args.dll else PLUGIN))
     threads = os.cpu_count() or 1
     frames_many = max(args.frames, threads * 2)

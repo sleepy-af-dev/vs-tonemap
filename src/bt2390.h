@@ -1,13 +1,13 @@
 // The BT.2390 tone mapper: the EETF applied in one colour representation.
 
-#ifndef TONEMAPPER_BT2390_H
-#define TONEMAPPER_BT2390_H
+#ifndef TONEMAP_BT2390_H
+#define TONEMAP_BT2390_H
 
 #include <cstddef>
 
 #include "colour.h"
 
-namespace tonemapper {
+namespace tonemap {
 
 enum class Representation {
     Ictcp,
@@ -35,6 +35,6 @@ void toneMapRow(const float* srcR, const float* srcG, const float* srcB,
                 float* dstR, float* dstG, float* dstB, size_t width,
                 Representation rep, const FrameParams& params);
 
-}  // namespace tonemapper
+}  // namespace tonemap
 
-#endif  // TONEMAPPER_BT2390_H
+#endif  // TONEMAP_BT2390_H

@@ -1,13 +1,13 @@
 // The BT.2407 gamut conversion from BT.2020 to BT.709.
 
-#ifndef TONEMAPPER_BT2407_H
-#define TONEMAPPER_BT2407_H
+#ifndef TONEMAP_BT2407_H
+#define TONEMAP_BT2407_H
 
 #include <cstddef>
 
 #include "colour.h"
 
-namespace tonemapper {
+namespace tonemap {
 
 enum class GamutMethod {
     Clip,     // section 2: matrix, then clamp each channel
@@ -51,6 +51,6 @@ struct GamutParams {
 void gamutMapRow(const float* srcR, const float* srcG, const float* srcB, float* dstR,
                  float* dstG, float* dstB, size_t width, const GamutParams& params);
 
-}  // namespace tonemapper
+}  // namespace tonemap
 
-#endif  // TONEMAPPER_BT2407_H
+#endif  // TONEMAP_BT2407_H

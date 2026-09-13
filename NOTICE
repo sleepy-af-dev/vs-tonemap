@@ -1,7 +1,7 @@
 Third-party components
 ======================
 
-vs-tonemapper itself is MIT licensed; see LICENSE. This file lists every
+vs-tonemap itself is MIT licensed; see LICENSE. This file lists every
 third-party component the repository or the released DLL contains, and where
 each component's own notice lives. Those per-component notices are the
 operative ones; this file is the index to check first.

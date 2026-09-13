@@ -35,7 +35,7 @@ body:
       placeholder: |
         clip = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="2020ncl",
                                    transfer_in_s="st2084", primaries_in_s="2020")
-        clip = core.tonemapper.BT2390(clip)
+        clip = core.tonemap.BT2390(clip)
     validations:
       required: true
 
@@ -51,9 +51,9 @@ body:
         import vapoursynth as vs
 
         core = vs.core
-        core.std.LoadPlugin("tonemapper.dll")  # skip this line if it autoloads
+        core.std.LoadPlugin("vs-tonemap.dll")  # skip this line if it autoloads
         print("VapourSynth:", core.core_version)
-        print("Info:", core.tonemapper.Info())
+        print("Info:", core.tonemap.Info())
         ```
       render: text
     validations:

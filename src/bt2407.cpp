@@ -4,7 +4,7 @@
 #include <cstring>
 #include <limits>
 
-namespace tonemapper {
+namespace tonemap {
 
 namespace {
 
@@ -251,4 +251,4 @@ void gamutMapRow(const float* srcR, const float* srcG, const float* srcB, float*
     }
 }
 
-}  // namespace tonemapper
+}  // namespace tonemap

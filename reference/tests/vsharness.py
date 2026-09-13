@@ -10,7 +10,7 @@ from typing import Any
 import numpy as np
 import vapoursynth as vs
 
-PLUGIN = Path(__file__).resolve().parents[2] / "build" / "tonemapper.dll"
+PLUGIN = Path(__file__).resolve().parents[2] / "build" / "vs-tonemap.dll"
 
 # Two gates, because the fixture inputs are float64 and a clip can only carry
 # float32, so a filter never sees the fixture value exactly.

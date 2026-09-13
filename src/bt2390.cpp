@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-namespace tonemapper {
+namespace tonemap {
 
 namespace {
 
@@ -298,4 +298,4 @@ void toneMapRow(const float* srcR, const float* srcG, const float* srcB,
     }
 }
 
-}  // namespace tonemapper
+}  // namespace tonemap

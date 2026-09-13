@@ -1,4 +1,4 @@
-# vs-tonemapper
+# vs-tonemap
 
 A CPU-only VapourSynth plugin that converts PQ HDR to SDR. Two filters:
 
@@ -26,24 +26,24 @@ equations, together with the test suite that compares the two, is in
 
 ## Installing
 
-Download `tonemapper.dll` from the releases,
+Download `vs-tonemap.dll` from the releases,
 <https://github.com/sleepy-af-dev/vs-tonemap/releases>, or build it yourself;
-see "Building" below. Each release ships `tonemapper.dll.sha256` beside the
+see "Building" below. Each release ships `vs-tonemap.dll.sha256` beside the
 binary, so the download can be checked before it is loaded:
 
 ```
-sha256sum -c tonemapper.dll.sha256
+sha256sum -c vs-tonemap.dll.sha256
 ```
 
 Put the DLL in a directory VapourSynth autoloads plugins from, or load it from
 the script:
 
 ```python
-core.std.LoadPlugin(path="/path/to/tonemapper.dll")
+core.std.LoadPlugin(path="/path/to/vs-tonemap.dll")
 ```
 
-It registers the namespace `tonemapper` and the identifier
-`com.vstonemapper.plugin`.
+It registers the namespace `tonemap` and the identifier
+`com.vstonemap.plugin`.
 
 ## Usage
 
@@ -58,8 +58,8 @@ lin = core.resize.Bicubic(src, format=vs.RGBS,
                           transfer_in_s="st2084", transfer_s="linear",
                           primaries_in_s="2020", primaries_s="2020",
                           nominal_luminance=100)
-sdr = core.tonemapper.BT2390(lin, nominal_luminance=100)
-sdr = core.tonemapper.BT2407(sdr)
+sdr = core.tonemap.BT2390(lin, nominal_luminance=100)
+sdr = core.tonemap.BT2407(sdr)
 out = core.resize.Bicubic(sdr, format=vs.YUV420P10, matrix_s="709",
                           transfer_s="709", primaries_s="709")
 ```
@@ -89,7 +89,7 @@ from R74 on carry `_Range`, which must be 1 (full); older cores carry
 `_ColorRange`, which must be 0, the convention of the day. Both spellings are
 read, so range validation works on every supported core.
 
-## tonemapper.BT2390
+## tonemap.BT2390
 
 ```
 BT2390(clip clip, [float src_min, float src_max, float dst_min=0.0,
@@ -176,7 +176,7 @@ Annex 5 means by a result outside the target colour volume, and `BT2407`
 accepts such input. All five representations also overshoot when `dst_min` is
 above `src_min`; see the next section.
 
-## tonemapper.BT2407
+## tonemap.BT2407
 
 ```
 BT2407(clip clip, [data method="softclip", float beta=0.2,
@@ -324,11 +324,11 @@ machine ever disagrees with its own vector unit. It is not a tuning knob: the
 scalar path computes values within one float32 ULP of the vector path and is
 up to five times slower.
 
-`tonemapper.Info()` reports what the plugin chose, which is worth including in
+`tonemap.Info()` reports what the plugin chose, which is worth including in
 a bug report:
 
 ```python
->>> core.tonemapper.Info()
+>>> core.tonemap.Info()
 {'available_targets': ['AVX3_ZEN4', 'AVX3_DL', 'AVX3', 'AVX2', 'SSE4',
  'SSSE3', 'SSE2'], 'double_lanes': 8, 'ictcp_float32_lanes': 0,
  'target': 'AVX3_ZEN4', 'version': '0.1.0'}
@@ -370,7 +370,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-The result is `build/tonemapper.dll`. The tests need the `uv` Python package
+The result is `build/vs-tonemap.dll`. The tests need the `uv` Python package
 manager and bring their own VapourSynth from PyPI, so no system install is
 involved:
 

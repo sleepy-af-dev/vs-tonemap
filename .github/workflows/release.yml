@@ -29,7 +29,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --project reference
 
-      # The configure CI uses. TONEMAPPER_FLOAT32_ICTCP is deliberately not
+      # The configure CI uses. TONEMAP_FLOAT32_ICTCP is deliberately not
       # passed, so it keeps its OFF default and the ictcp kernel runs on double
       # lanes; test_the_shipped_build_uses_double_lanes asserts that against the
       # DLL this job is about to upload.
@@ -52,7 +52,7 @@ jobs:
         if: github.event_name == 'push'
         run: >
           uv run --project reference python .github/scripts/check_version.py
-          "${{ github.ref_name }}" build/tonemapper.dll
+          "${{ github.ref_name }}" build/vs-tonemap.dll
 
       # LICENSE and NOTICE ride with the binary because the DLL carries the code
       # both static dependencies' notices cover.
@@ -60,10 +60,10 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
-          cp build/tonemapper.dll LICENSE NOTICE dist/
+          cp build/vs-tonemap.dll LICENSE NOTICE dist/
           cd dist
-          sha256sum tonemapper.dll > tonemapper.dll.sha256
-          cat tonemapper.dll.sha256
+          sha256sum vs-tonemap.dll > vs-tonemap.dll.sha256
+          cat vs-tonemap.dll.sha256
 
       # The notes are written in CHANGELOG.md when the change is made, so this
       # fails the release rather than publishing a tag the changelog never
@@ -83,13 +83,13 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           gh release create "$TAG" --draft --notes-file release_notes.md --title "$TAG" \
-            dist/tonemapper.dll dist/tonemapper.dll.sha256 dist/LICENSE dist/NOTICE
+            dist/vs-tonemap.dll dist/vs-tonemap.dll.sha256 dist/LICENSE dist/NOTICE
 
       - name: Upload the dry-run assets
         if: github.event_name != 'push'
         uses: actions/upload-artifact@v7
         with:
-          name: tonemapper-dry-run
+          name: vs-tonemap-dry-run
           path: dist/
           retention-days: 7
           if-no-files-found: error
