@@ -10,13 +10,13 @@
 // Sources: ITU-R BT.2100-3 Table 4 (PQ), Table 7 (ICtCp), ITU-R BT.2408-9
 // Annex 5 (the EETF).
 
-#ifndef TONEMAPPER_COLOUR_H
-#define TONEMAPPER_COLOUR_H
+#ifndef TONEMAP_COLOUR_H
+#define TONEMAP_COLOUR_H
 
 #include <cmath>
 #include <string>
 
-namespace tonemapper {
+namespace tonemap {
 
 // --- PQ, BT.2100-3 Table 4 -------------------------------------------------
 
@@ -244,6 +244,6 @@ inline T chromaRatio(T v1, T v2) {
     return a < b ? a : b;
 }
 
-}  // namespace tonemapper
+}  // namespace tonemap
 
-#endif  // TONEMAPPER_COLOUR_H
+#endif  // TONEMAP_COLOUR_H

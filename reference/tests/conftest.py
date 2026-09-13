@@ -14,9 +14,9 @@ def plugin():
     """The compiled filter, loaded once. Skips the suite when it is not built."""
     if not PLUGIN.exists():
         pytest.skip(f"{PLUGIN.name} is not built")
-    if not hasattr(core, "tonemapper"):
+    if not hasattr(core, "tonemap"):
         core.std.LoadPlugin(path=str(PLUGIN))
-    return core.tonemapper
+    return core.tonemap
 
 
 @pytest.fixture(scope="session")

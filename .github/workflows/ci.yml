@@ -2,7 +2,7 @@ name: CI
 
 # Two jobs, split by whether a check needs the compiled plugin. Lint and the
 # type check read the Python sources only, so they run on Linux; the tests
-# load tonemapper.dll and so have to build it on Windows first.
+# load vs-tonemap.dll and so have to build it on Windows first.
 #
 # Both install from the lockfile with --locked, which fails if the lockfile
 # has drifted from pyproject.toml. The tool versions a run uses are therefore

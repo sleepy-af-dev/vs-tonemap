@@ -1,4 +1,4 @@
-// vs-tonemapper: BT.2390 tone mapping and BT.2407 gamut conversion for VapourSynth.
+// vs-tonemap: BT.2390 tone mapping and BT.2407 gamut conversion for VapourSynth.
 
 #include <VSConstants4.h>
 #include <VSHelper4.h>
@@ -14,8 +14,8 @@
 
 namespace {
 
-using tonemapper::FrameParams;
-using tonemapper::Representation;
+using tonemap::FrameParams;
+using tonemap::Representation;
 
 // The version, in one place. VapourSynth packs a plugin version into one int
 // as (major << 16) | minor, so the patch component cannot reach configPlugin
@@ -148,7 +148,7 @@ std::string resolveFrameParams(const FilterData* d, const VSMap* props,
     out->dstMax = d->dstMax;
     // Whichever name the value came in under is the name the message uses, so
     // a bad mastering tag does not read as a bad argument.
-    return tonemapper::makeEetf(srcMin, srcMax, d->dstMin, d->dstMax, minName, maxName,
+    return tonemap::makeEetf(srcMin, srcMax, d->dstMin, d->dstMax, minName, maxName,
                                 &out->curve);
 }
 
@@ -199,7 +199,7 @@ const VSFrame* VS_CC getFrame(int n, int activationReason, void* instanceData, v
         dstStride[p] = vsapi->getStride(dst, p) / static_cast<ptrdiff_t>(sizeof(float));
     }
     for (int y = 0; y < height; ++y) {
-        const auto row = d->simd ? tonemapper::toneMapRowSimd : tonemapper::toneMapRow;
+        const auto row = d->simd ? tonemap::toneMapRowSimd : tonemap::toneMapRow;
         row(srcPlane[0] + y * srcStride[0], srcPlane[1] + y * srcStride[1],
             srcPlane[2] + y * srcStride[2], dstPlane[0] + y * dstStride[0],
             dstPlane[1] + y * dstStride[1], dstPlane[2] + y * dstStride[2],
@@ -241,11 +241,11 @@ double optionalFloat(const VSMap* in, const VSAPI* vsapi, const char* key,
 
 // --- BT2407 ----------------------------------------------------------------
 
-using tonemapper::Chromaticity;
-using tonemapper::GamutMethod;
-using tonemapper::GamutParams;
-using tonemapper::Primaries;
-using tonemapper::SourceGamut;
+using tonemap::Chromaticity;
+using tonemap::GamutMethod;
+using tonemap::GamutParams;
+using tonemap::Primaries;
+using tonemap::SourceGamut;
 
 struct GamutFilterData {
     VSNode* node;
@@ -289,7 +289,7 @@ bool masteringPrimaries(const VSMap* props, const VSAPI* vsapi, Primaries* out) 
     if (!readNumber(props, vsapi, "MasteringDisplayWhitePointY", 0, &white.y)) return false;
 
     const Primaries found = {{xs[0], ys[0]}, {xs[1], ys[1]}, {xs[2], ys[2]}};
-    if (!tonemapper::validGamut(found, white)) return false;
+    if (!tonemap::validGamut(found, white)) return false;
     *out = found;
     return true;
 }
@@ -302,10 +302,10 @@ std::string resolveGamutParams(const GamutFilterData* d, const VSMap* props,
     out->method = d->method;
     out->beta = d->beta;
 
-    Primaries primaries = tonemapper::kPrimariesBt2020;
+    Primaries primaries = tonemap::kPrimariesBt2020;
     out->label = "bt2020";
     if (d->srcGamut == SourceGamut::P3D65) {
-        primaries = tonemapper::kPrimariesP3D65;
+        primaries = tonemap::kPrimariesP3D65;
         out->label = "p3d65";
     } else if (d->srcGamut == SourceGamut::Auto &&
                masteringPrimaries(props, vsapi, &primaries)) {
@@ -316,7 +316,7 @@ std::string resolveGamutParams(const GamutFilterData* d, const VSMap* props,
     // millions of pixels, so it is not cached: a cache would be shared mutable
     // state in a filter declared parallel, for no measurable gain.
     if (d->method == GamutMethod::Clip) out->label = "bt2020";
-    out->xyzToSource = tonemapper::inverse(tonemapper::rgbToXyz(primaries, tonemapper::kD65));
+    out->xyzToSource = tonemap::inverse(tonemap::rgbToXyz(primaries, tonemap::kD65));
     return std::string();
 }
 
@@ -358,7 +358,7 @@ const VSFrame* VS_CC gamutGetFrame(int n, int activationReason, void* instanceDa
             dstPlane[p] =
                 reinterpret_cast<float*>(vsapi->getWritePtr(dst, p)) + y * dstStride;
         }
-        const auto row = d->simd ? tonemapper::gamutMapRowSimd : tonemapper::gamutMapRow;
+        const auto row = d->simd ? tonemap::gamutMapRowSimd : tonemap::gamutMapRow;
         row(srcPlane[0], srcPlane[1], srcPlane[2], dstPlane[0], dstPlane[1], dstPlane[2],
             static_cast<size_t>(width), params);
     }
@@ -397,7 +397,7 @@ void VS_CC gamutFreeFilter(void* instanceData, VSCore*, const VSAPI* vsapi) {
 void VS_CC infoCreate(const VSMap* in, VSMap* out, void*, VSCore*, const VSAPI* vsapi) {
     int err = 0;
     const char* wanted = vsapi->mapGetData(in, "target", 0, &err);
-    if (err == 0 && !tonemapper::simdForceTarget(wanted)) {
+    if (err == 0 && !tonemap::simdForceTarget(wanted)) {
         vsapi->mapSetError(out, ("Info: this build has no target named " +
                                  std::string(wanted) + " that this machine can run")
                                     .c_str());
@@ -410,14 +410,14 @@ void VS_CC infoCreate(const VSMap* in, VSMap* out, void*, VSCore*, const VSAPI* 
     vsapi->mapSetData(out, "version", version.c_str(), static_cast<int>(version.size()),
                       dtUtf8, maReplace);
 
-    const char* target = tonemapper::simdTargetName();
+    const char* target = tonemap::simdTargetName();
     vsapi->mapSetData(out, "target", target, static_cast<int>(std::strlen(target)),
                       dtUtf8, maReplace);
-    vsapi->mapSetInt(out, "ictcp_float32_lanes", tonemapper::ictcpUsesFloatLanes() ? 1 : 0,
+    vsapi->mapSetInt(out, "ictcp_float32_lanes", tonemap::ictcpUsesFloatLanes() ? 1 : 0,
                      maReplace);
     vsapi->mapSetInt(out, "double_lanes",
-                     static_cast<int64_t>(tonemapper::simdDoubleLanes()), maReplace);
-    for (const char* name : tonemapper::simdTargets()) {
+                     static_cast<int64_t>(tonemap::simdDoubleLanes()), maReplace);
+    for (const char* name : tonemap::simdTargets()) {
         vsapi->mapSetData(out, "available_targets", name,
                           static_cast<int>(std::strlen(name)), dtUtf8, maAppend);
     }
@@ -453,11 +453,11 @@ void VS_CC bt2407Create(const VSMap* in, VSMap* out, void*, VSCore* core,
     // Both are checked whatever the method, so a typo in one is not swallowed
     // by the other choosing a path that ignores it.
     std::string bad;
-    if (!tonemapper::parseGamutMethod(method, &d->method)) {
-        bad = "method must be one of " + std::string(tonemapper::gamutMethodNames()) +
+    if (!tonemap::parseGamutMethod(method, &d->method)) {
+        bad = "method must be one of " + std::string(tonemap::gamutMethodNames()) +
               ", got " + method;
-    } else if (!tonemapper::parseSourceGamut(gamut, &d->srcGamut)) {
-        bad = "src_gamut must be one of " + std::string(tonemapper::sourceGamutNames()) +
+    } else if (!tonemap::parseSourceGamut(gamut, &d->srcGamut)) {
+        bad = "src_gamut must be one of " + std::string(tonemap::sourceGamutNames()) +
               ", got " + gamut;
     } else if (!std::isfinite(d->beta) || d->beta < 0.0 || d->beta >= 1.0) {
         bad = "beta must be in [0, 1)";
@@ -501,9 +501,9 @@ void VS_CC bt2390Create(const VSMap* in, VSMap* out, void*, VSCore* core,
     int err = 0;
     const char* rep = vsapi->mapGetData(in, "representation", 0, &err);
     if (err != 0) rep = "ictcp";
-    if (!tonemapper::parseRepresentation(rep, &d->rep)) {
+    if (!tonemap::parseRepresentation(rep, &d->rep)) {
         const std::string message = "representation must be one of " +
-                                    std::string(tonemapper::representationNames()) +
+                                    std::string(tonemap::representationNames()) +
                                     ", got " + rep;
         delete d;
         fail(message);
@@ -518,9 +518,9 @@ void VS_CC bt2390Create(const VSMap* in, VSMap* out, void*, VSCore* core,
     if (!std::isfinite(d->nominal) || d->nominal <= 0.0) {
         bad = "nominal_luminance must be a positive number of cd/m2";
     }
-    if (bad.empty()) bad = tonemapper::checkTargetRange(d->dstMin, d->dstMax);
-    if (bad.empty() && d->haveSrcMin) bad = tonemapper::checkLuminance("src_min", d->srcMin);
-    if (bad.empty() && d->haveSrcMax) bad = tonemapper::checkLuminance("src_max", d->srcMax);
+    if (bad.empty()) bad = tonemap::checkTargetRange(d->dstMin, d->dstMax);
+    if (bad.empty() && d->haveSrcMin) bad = tonemap::checkLuminance("src_min", d->srcMin);
+    if (bad.empty() && d->haveSrcMax) bad = tonemap::checkLuminance("src_max", d->srcMax);
     if (!bad.empty()) {
         delete d;
         fail(bad);
@@ -529,8 +529,8 @@ void VS_CC bt2390Create(const VSMap* in, VSMap* out, void*, VSCore* core,
 
     // The source pair is only complete here when both came in as arguments.
     if (d->haveSrcMin && d->haveSrcMax) {
-        tonemapper::Eetf unused{};
-        bad = tonemapper::makeEetf(d->srcMin, d->srcMax, d->dstMin, d->dstMax, "src_min",
+        tonemap::Eetf unused{};
+        bad = tonemap::makeEetf(d->srcMin, d->srcMax, d->dstMin, d->dstMax, "src_min",
                                    "src_max", &unused);
         if (!bad.empty()) {
             delete d;
@@ -547,7 +547,7 @@ void VS_CC bt2390Create(const VSMap* in, VSMap* out, void*, VSCore* core,
 }  // namespace
 
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* vspapi) {
-    vspapi->configPlugin("com.vstonemapper.plugin", "tonemapper",
+    vspapi->configPlugin("com.vstonemap.plugin", "tonemap",
                          "BT.2390 tone mapping and BT.2407 gamut conversion",
                          VS_MAKE_VERSION(kVersionMajor, kVersionMinor),
                          VAPOURSYNTH_API_VERSION, 0, plugin);

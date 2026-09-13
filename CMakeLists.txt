@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(vs-tonemapper LANGUAGES C CXX)
+project(vs-tonemap LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -11,7 +11,7 @@ endif()
 # The ictcp kernel can be built with float lanes instead of double, to
 # measure what the precision decision costs. It is off in the shipped build
 # and exists only so the decision rests on a number rather than a guess.
-option(TONEMAPPER_FLOAT32_ICTCP "build the ictcp kernel with float lanes" OFF)
+option(TONEMAP_FLOAT32_ICTCP "build the ictcp kernel with float lanes" OFF)
 
 # Link the C and C++ runtimes statically. The plugin is distributed as one DLL
 # that someone drops into an autoload directory, and a dynamic CRT makes that
@@ -51,20 +51,20 @@ FetchContent_Declare(sleef
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(sleef)
 
-add_library(tonemapper MODULE src/plugin.cpp src/bt2390.cpp src/bt2407.cpp src/simd.cpp)
-set_target_properties(tonemapper PROPERTIES
+add_library(vs-tonemap MODULE src/plugin.cpp src/bt2390.cpp src/bt2407.cpp src/simd.cpp)
+set_target_properties(vs-tonemap PROPERTIES
   PREFIX ""
   CXX_VISIBILITY_PRESET hidden
   VISIBILITY_INLINES_HIDDEN ON)
 # src is on the include path because Highway re-includes simd.cpp once per
 # target from inside its own header; without it the include only resolves
 # through Microsoft's non-standard search rules, which clang warns about.
-target_include_directories(tonemapper PRIVATE
+target_include_directories(vs-tonemap PRIVATE
   src include/vapoursynth ${sleef_BINARY_DIR}/include)
-target_link_libraries(tonemapper PRIVATE hwy sleef)
-if(TONEMAPPER_FLOAT32_ICTCP)
-  target_compile_definitions(tonemapper PRIVATE TONEMAPPER_FLOAT32_ICTCP=1)
+target_link_libraries(vs-tonemap PRIVATE hwy sleef)
+if(TONEMAP_FLOAT32_ICTCP)
+  target_compile_definitions(vs-tonemap PRIVATE TONEMAP_FLOAT32_ICTCP=1)
 endif()
-target_compile_options(tonemapper PRIVATE
+target_compile_options(vs-tonemap PRIVATE
   $<$<CXX_COMPILER_ID:Clang,AppleClang,GNU>:-Wall -Wextra -Wconversion -Wno-unused-parameter>
   $<$<CXX_COMPILER_ID:MSVC>:/W4>)

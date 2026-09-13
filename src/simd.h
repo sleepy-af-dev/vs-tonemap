@@ -3,8 +3,8 @@
 // Same contract and same results as the scalar kernels in bt2390.cpp and
 // bt2407.cpp, which stay as the reference the SIMD path is tested against.
 
-#ifndef TONEMAPPER_SIMD_H
-#define TONEMAPPER_SIMD_H
+#ifndef TONEMAP_SIMD_H
+#define TONEMAP_SIMD_H
 
 #include <cstddef>
 #include <vector>
@@ -12,7 +12,7 @@
 #include "bt2390.h"
 #include "bt2407.h"
 
-namespace tonemapper {
+namespace tonemap {
 
 void toneMapRowSimd(const float* srcR, const float* srcG, const float* srcB,
                     float* dstR, float* dstG, float* dstB, size_t width,
@@ -44,6 +44,6 @@ std::vector<const char*> simdTargets();
 // when it is called.
 bool simdForceTarget(const char* name);
 
-}  // namespace tonemapper
+}  // namespace tonemap
 
-#endif  // TONEMAPPER_SIMD_H
+#endif  // TONEMAP_SIMD_H

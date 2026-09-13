@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and
 the tags follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 VapourSynth packs a plugin version into one int as `(major << 16) | minor`, so
 the `PluginVersion` the core reports carries no patch component and a 0.1.0 and
-a 0.1.1 look alike there. `tonemapper.Info()` reports the release in full, and
+a 0.1.1 look alike there. `tonemap.Info()` reports the release in full, and
 is what a bug report should quote.
 
 ## [Unreleased]

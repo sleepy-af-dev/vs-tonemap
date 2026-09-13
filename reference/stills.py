@@ -28,7 +28,7 @@ from bt2407_ref import clip as bt2407_clip
 ROOT = Path(__file__).resolve().parents[1]
 RESOURCES = ROOT / ".local" / "resources"
 STILLS = RESOURCES / "stills"
-PLUGIN = ROOT / "build" / "tonemapper.dll"
+PLUGIN = ROOT / "build" / "vs-tonemap.dll"
 
 core: Any = vs.core  # the wheel's stub has no plugin namespaces
 
@@ -183,8 +183,8 @@ def timestamp(frame, fps_num=24000, fps_den=1001):
 
 def render(linear, frame, method):
     """This plugin, through the compiled filter, at its documented defaults."""
-    sdr = core.tonemapper.BT2407(
-        core.tonemapper.BT2390(
+    sdr = core.tonemap.BT2407(
+        core.tonemap.BT2390(
             linear,
             src_min=SRC_MIN,
             src_max=SRC_MAX,
@@ -346,7 +346,7 @@ def main():
     parser.add_argument("--rescan", action="store_true", help="ignore the cached scan")
     args = parser.parse_args()
 
-    if not hasattr(core, "tonemapper"):
+    if not hasattr(core, "tonemap"):
         core.std.LoadPlugin(path=str(PLUGIN))
     source, indexer = open_clip(Path(args.clip))
     print(
