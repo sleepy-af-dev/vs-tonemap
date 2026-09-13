@@ -1,3 +1,10 @@
 # Line endings: LF in the repository and in every working copy, whatever the
 # platform's autocrlf setting. Binary detection stays automatic.
 * text=auto eol=lf
+
+# Language statistics. The test suite is the single largest body of Python
+# here, about 100 kB against 89 kB of C++ in src, so GitHub was reporting the
+# repository as Python: a fair count of the bytes, a poor description of a C++
+# plugin. Only the tests are excluded; the float64 oracle and the benchmark
+# still count, because they are the reason the Python is here at all.
+reference/tests/** linguist-detectable=false
