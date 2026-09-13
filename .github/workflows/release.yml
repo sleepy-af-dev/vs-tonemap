@@ -1,12 +1,16 @@
 name: Release
 
-# A tag push builds, verifies and drafts a release. A manual run builds exactly
-# the same way and uploads the assets as an artifact instead, so a change to
-# this workflow can be exercised without spending a version number on finding
-# out it was wrong.
+# A tag push builds, verifies and publishes a release. A manual run builds
+# exactly the same way and uploads the assets as an artifact instead, so a
+# change to this workflow can be exercised without spending a version number on
+# finding out it was wrong.
 #
-# The release is left as a draft. The binary is built and checked here; the
-# notes and the decision to publish stay with a person.
+# Pushing the tag is the decision to publish, and the tag is the only step a
+# person takes. Three things have to agree before anything reaches the releases
+# page: the suite has to pass against the DLL being uploaded, the version that
+# DLL reports has to match the tag, and CHANGELOG.md has to have a section for
+# it. Any of them failing leaves the tag pushed and no release created, which is
+# recoverable; the first release was drafted instead, which proved the path.
 
 on:
   push:
@@ -93,14 +97,14 @@ jobs:
           uv run --project reference python .github/scripts/release_notes.py
           "${{ github.ref_name }}" release_notes.md
 
-      - name: Draft the release
+      - name: Publish the release
         if: github.event_name == 'push'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" --draft --notes-file release_notes.md \
+          gh release create "$TAG" --notes-file release_notes.md \
             --title "vs-tonemap ${TAG#v}" \
             "dist/$ARCHIVE" "dist/$ARCHIVE.sha256"
 
