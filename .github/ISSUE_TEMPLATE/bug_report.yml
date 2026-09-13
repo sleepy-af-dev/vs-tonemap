@@ -1,0 +1,90 @@
+name: Bug report
+description: Report a bug or unexpected output
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please fill in the diagnostics section: the plugin
+        picks one of several SIMD kernels at run time, and which one ran is the
+        first thing to check.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened
+      description: What went wrong, and what you saw instead of what you expected.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: How to reproduce it
+      description: >
+        The smallest script that shows the problem. Include the format the clip is
+        in when it reaches the filter, since the conversion depends on it.
+      render: python
+      placeholder: |
+        clip = core.resize.Bicubic(src, format=vs.RGBS, matrix_in_s="2020ncl",
+                                   transfer_in_s="st2084", primaries_in_s="2020")
+        clip = core.tonemapper.BT2390(clip)
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: |
+        Run this and paste the output. It reports the core, the plugin version and
+        the kernel dispatch chose on your machine.
+
+        ```python
+        import vapoursynth as vs
+
+        core = vs.core
+        core.std.LoadPlugin("tonemapper.dll")  # skip this line if it autoloads
+        print("VapourSynth:", core.core_version)
+        print("plugin:", next(p.version for p in core.plugins() if p.namespace == "tonemapper"))
+        print("Info:", core.tonemapper.Info())
+        ```
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: scalar
+    attributes:
+      label: Does it still happen with simd=0?
+      description: >
+        Passing simd=0 to the filter runs the scalar reference instead of the
+        vector path. If the bug goes away it is in a SIMD kernel; if it survives
+        it is in the arithmetic both paths share.
+      options:
+        - "Yes, simd=0 reproduces it"
+        - "No, simd=0 gives the right result"
+        - "Have not tried"
+    validations:
+      required: true
+
+  - type: input
+    id: machine
+    attributes:
+      label: OS and CPU
+      placeholder: Windows 11, Ryzen 9 7950X
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else
+      description: Logs, screenshots, sample frames, or a link to a clip that shows it.
