@@ -17,6 +17,15 @@ namespace {
 using tonemapper::FrameParams;
 using tonemapper::Representation;
 
+// The version, in one place. VapourSynth packs a plugin version into one int
+// as (major << 16) | minor, so the patch component cannot reach configPlugin
+// and two releases that differ only in it report the same PluginVersion.
+// Info() is therefore where a release names itself in full, and Info() is what
+// a bug report quotes.
+constexpr int kVersionMajor = 0;
+constexpr int kVersionMinor = 1;
+constexpr int kVersionPatch = 0;
+
 // VapourSynth renamed the range property to `_Range`, where 1 is full range.
 // The core translates the deprecated `_ColorRange` spelling into `_Range` and
 // inverts the value as it does so, in the map itself, so a frame never holds
@@ -395,6 +404,12 @@ void VS_CC infoCreate(const VSMap* in, VSMap* out, void*, VSCore*, const VSAPI* 
         return;
     }
 
+    const std::string version = std::to_string(kVersionMajor) + "." +
+                                std::to_string(kVersionMinor) + "." +
+                                std::to_string(kVersionPatch);
+    vsapi->mapSetData(out, "version", version.c_str(), static_cast<int>(version.size()),
+                      dtUtf8, maReplace);
+
     const char* target = tonemapper::simdTargetName();
     vsapi->mapSetData(out, "target", target, static_cast<int>(std::strlen(target)),
                       dtUtf8, maReplace);
@@ -534,10 +549,11 @@ void VS_CC bt2390Create(const VSMap* in, VSMap* out, void*, VSCore* core,
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI* vspapi) {
     vspapi->configPlugin("com.vstonemapper.plugin", "tonemapper",
                          "BT.2390 tone mapping and BT.2407 gamut conversion",
-                         VS_MAKE_VERSION(0, 1), VAPOURSYNTH_API_VERSION, 0, plugin);
+                         VS_MAKE_VERSION(kVersionMajor, kVersionMinor),
+                         VAPOURSYNTH_API_VERSION, 0, plugin);
     vspapi->registerFunction("Info", "target:data:opt;",
-                             "target:data;ictcp_float32_lanes:int;double_lanes:int;"
-                             "available_targets:data[];",
+                             "version:data;target:data;ictcp_float32_lanes:int;"
+                             "double_lanes:int;available_targets:data[];",
                              infoCreate, nullptr, plugin);
     vspapi->registerFunction("BT2407",
                              "clip:vnode;method:data:opt;beta:float:opt;"

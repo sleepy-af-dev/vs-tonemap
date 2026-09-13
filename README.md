@@ -5,8 +5,9 @@ A CPU-only VapourSynth plugin that converts PQ HDR to SDR. Two filters:
 - `BT2390` applies the ITU-R BT.2390 tone mapping curve as ITU-R BT.2408
   Annex 5 specifies it, in any of the five colour representations that annex
   describes.
-- `BT2407` converts BT.2020 to BT.709 with the luminance-preserving gamut
-  projection of ITU-R BT.2407 Annex 5.
+- `BT2407` converts BT.2020 to BT.709, either with the luminance-preserving
+  gamut projection of ITU-R BT.2407 Annex 5 or with the hard clip of its
+  section 2.
 
 The maths follows the ITU text as written. Every pixel is computed in float64
 and stored as float32, and the speed comes from explicit SIMD rather than from
@@ -25,8 +26,17 @@ equations, together with the test suite that compares the two, is in
 
 ## Installing
 
-Put `tonemapper.dll` in a directory VapourSynth autoloads plugins from, or
-load it from the script:
+Download `tonemapper.dll` from the releases,
+<https://github.com/sleepy-af-dev/vs-tonemap/releases>, or build it yourself;
+see "Building" below. Each release ships `tonemapper.dll.sha256` beside the
+binary, so the download can be checked before it is loaded:
+
+```
+sha256sum -c tonemapper.dll.sha256
+```
+
+Put the DLL in a directory VapourSynth autoloads plugins from, or load it from
+the script:
 
 ```python
 core.std.LoadPlugin(path="/path/to/tonemapper.dll")
@@ -188,6 +198,12 @@ from white in u'v'. A colour less than `1 - beta` of the way from white to the
 BT.709 boundary comes through untouched, which is about a third of random
 in-gamut colours.
 
+`clip` applies the BT.2020 to BT.709 matrix and then clamps each channel to
+[0, 1] on its own, which is the conversion BT.2407 section 2 describes.
+Clamping channels independently changes the ratios between them, so it holds
+neither hue nor luminance where it bites. `beta` and `src_gamut` do not apply
+to it.
+
 Equation (5-4) of the report prints the bracket in the roll-off unsquared. At
 r = 1 + alpha, where the function has to be 1, the printed form gives 3.17
 with alpha 0.5 and beta 0.2, and since it divides by (beta - alpha) squared it
@@ -315,9 +331,13 @@ a bug report:
 >>> core.tonemapper.Info()
 {'available_targets': ['AVX3_ZEN4', 'AVX3_DL', 'AVX3', 'AVX2', 'SSE4',
  'SSSE3', 'SSE2'], 'double_lanes': 8, 'ictcp_float32_lanes': 0,
- 'target': 'AVX3_ZEN4'}
+ 'target': 'AVX3_ZEN4', 'version': '0.1.0'}
 ```
 
+`version` is the release in full, all three components. VapourSynth's own
+plugin version packs a major and a minor into one int and has nowhere to put a
+patch, so two releases differing only in it report the same `PluginVersion`;
+this key is how a 0.1.1 tells itself apart.
 `available_targets` lists the kernels compiled into the DLL that this CPU can
 run, best first. `Info(target="AVX2")` restricts dispatch to one of them for
 the rest of the process and an empty string restores the automatic choice;
