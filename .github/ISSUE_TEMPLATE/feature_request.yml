@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a new feature or enhancement
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. The README's "Known limitations" section lists
+        what is not implemented, including dynamic metadata, HLG input and gamut
+        mappers other than the BT.2407 projection and the hard clip. If your
+        request is one of those, say so and describe what you need from it.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What are you trying to do that the plugin does not let you do?
+      placeholder: I'm trying to...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: The feature or behaviour you would like.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other approaches or workarounds you have tried, and why they fall short.
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Anything else
+      description: >
+        References are welcome, especially a specification or a paper describing
+        the behaviour you want.
