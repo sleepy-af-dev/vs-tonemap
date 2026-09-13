@@ -24,7 +24,8 @@ is what a bug report should quote.
   A clip with mastering metadata needs neither argument.
 - A kernel for every x86-64 instruction set in one DLL, chosen at run time, on
   Google Highway with SLEEF's `pow`. Every pixel is computed in float64 and
-  stored as float32.
+  stored as float32. The runtimes are linked statically, so the DLL needs
+  nothing installed beside it.
 - `Info()`, reporting the release in full, the target dispatch chose, the
   targets the build carries and the lane width, and `simd=0` on both filters to
   run the scalar reference.

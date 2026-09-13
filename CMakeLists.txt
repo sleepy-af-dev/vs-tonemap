@@ -13,6 +13,13 @@ endif()
 # and exists only so the decision rests on a number rather than a guess.
 option(TONEMAPPER_FLOAT32_ICTCP "build the ictcp kernel with float lanes" OFF)
 
+# Link the C and C++ runtimes statically. The plugin is distributed as one DLL
+# that someone drops into an autoload directory, and a dynamic CRT makes that
+# fail on any machine without the Microsoft Visual C++ redistributable, with an
+# error that says nothing useful. Set before FetchContent so Highway and SLEEF
+# are built the same way; mixing runtimes across static libraries does not link.
+set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+
 include(FetchContent)
 
 # Google Highway: portable SIMD with one binary per instruction set and
