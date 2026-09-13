@@ -22,6 +22,10 @@ jobs:
     timeout-minutes: 30
     permissions:
       contents: write
+    env:
+      # On a tag this is vs-tonemap-v0.1.0.zip. A manual run has no tag, so it
+      # is named for the branch, which is accurate enough for a dry run.
+      ARCHIVE: vs-tonemap-${{ github.ref_name }}.zip
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
@@ -59,11 +63,25 @@ jobs:
       - name: Stage the assets
         shell: bash
         run: |
-          mkdir -p dist
-          cp build/vs-tonemap.dll LICENSE NOTICE dist/
+          mkdir -p dist/vs-tonemap
+          cp build/vs-tonemap.dll LICENSE NOTICE dist/vs-tonemap/
+
+      # One archive rather than four loose assets, so the licence and the notice
+      # cannot be left behind on the way to a plugins directory. Compress-Archive
+      # rather than zip, which the runner image does not promise.
+      - name: Archive the assets
+        shell: pwsh
+        run: Compress-Archive -Path dist/vs-tonemap -DestinationPath "dist/$env:ARCHIVE"
+
+      # Coreutils format, so `sha256sum -c` verifies it, which is what the README
+      # tells people to run. Get-FileHash would print something they cannot feed
+      # back in.
+      - name: Checksum the archive
+        shell: bash
+        run: |
           cd dist
-          sha256sum vs-tonemap.dll > vs-tonemap.dll.sha256
-          cat vs-tonemap.dll.sha256
+          sha256sum "$ARCHIVE" > "$ARCHIVE.sha256"
+          cat "$ARCHIVE.sha256"
 
       # The notes are written in CHANGELOG.md when the change is made, so this
       # fails the release rather than publishing a tag the changelog never
@@ -82,14 +100,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
         run: |
-          gh release create "$TAG" --draft --notes-file release_notes.md --title "$TAG" \
-            dist/vs-tonemap.dll dist/vs-tonemap.dll.sha256 dist/LICENSE dist/NOTICE
+          gh release create "$TAG" --draft --notes-file release_notes.md \
+            --title "vs-tonemap ${TAG#v}" \
+            "dist/$ARCHIVE" "dist/$ARCHIVE.sha256"
 
       - name: Upload the dry-run assets
         if: github.event_name != 'push'
         uses: actions/upload-artifact@v7
         with:
           name: vs-tonemap-dry-run
-          path: dist/
+          path: |
+            dist/${{ env.ARCHIVE }}
+            dist/${{ env.ARCHIVE }}.sha256
           retention-days: 7
           if-no-files-found: error
+          # The payload is already compressed, so re-compressing it only costs time
+          compression-level: 0

@@ -26,13 +26,14 @@ equations, together with the test suite that compares the two, is in
 
 ## Installing
 
-Download `vs-tonemap.dll` from the releases,
+Download the archive from the releases,
 <https://github.com/sleepy-af-dev/vs-tonemap/releases>, or build it yourself;
-see "Building" below. Each release ships `vs-tonemap.dll.sha256` beside the
-binary, so the download can be checked before it is loaded:
+see "Building" below. It holds `vs-tonemap.dll` together with the `LICENSE` and
+`NOTICE` that travel with it. A `.sha256` ships beside the archive, so the
+download can be checked before it is opened:
 
 ```
-sha256sum -c vs-tonemap.dll.sha256
+sha256sum -c vs-tonemap-v0.1.0.zip.sha256
 ```
 
 Put the DLL in a directory VapourSynth autoloads plugins from, or load it from
