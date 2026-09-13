@@ -1,0 +1,95 @@
+name: Release
+
+# A tag push builds, verifies and drafts a release. A manual run builds exactly
+# the same way and uploads the assets as an artifact instead, so a change to
+# this workflow can be exercised without spending a version number on finding
+# out it was wrong.
+#
+# The release is left as a draft. The binary is built and checked here; the
+# notes and the decision to publish stay with a person.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          enable-cache: true
+      - run: uv sync --locked --project reference
+
+      # The configure CI uses. TONEMAPPER_FLOAT32_ICTCP is deliberately not
+      # passed, so it keeps its OFF default and the ictcp kernel runs on double
+      # lanes; test_the_shipped_build_uses_double_lanes asserts that against the
+      # DLL this job is about to upload.
+      - name: Configure
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_C_COMPILER=clang
+          -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build
+        run: cmake --build build
+
+      # The gate runs against the artifact being shipped, not against an earlier
+      # build of the same commit.
+      - name: Test
+        run: uv run --project reference pytest reference .github/scripts -q
+
+      - name: Check the plugin version matches the tag
+        if: github.event_name == 'push'
+        run: >
+          uv run --project reference python .github/scripts/check_version.py
+          "${{ github.ref_name }}" build/tonemapper.dll
+
+      # LICENSE and NOTICE ride with the binary because the DLL carries the code
+      # both static dependencies' notices cover.
+      - name: Stage the assets
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp build/tonemapper.dll LICENSE NOTICE dist/
+          cd dist
+          sha256sum tonemapper.dll > tonemapper.dll.sha256
+          cat tonemapper.dll.sha256
+
+      # The notes are written in CHANGELOG.md when the change is made, so this
+      # fails the release rather than publishing a tag the changelog never
+      # mentions. The extraction itself is covered by test_release_notes.py,
+      # which the Test step above runs.
+      - name: Extract the release notes
+        if: github.event_name == 'push'
+        run: >
+          uv run --project reference python .github/scripts/release_notes.py
+          "${{ github.ref_name }}" release_notes.md
+
+      - name: Draft the release
+        if: github.event_name == 'push'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --draft --notes-file release_notes.md --title "$TAG" \
+            dist/tonemapper.dll dist/tonemapper.dll.sha256 dist/LICENSE dist/NOTICE
+
+      - name: Upload the dry-run assets
+        if: github.event_name != 'push'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tonemapper-dry-run
+          path: dist/
+          retention-days: 7
+          if-no-files-found: error

@@ -53,7 +53,6 @@ body:
         core = vs.core
         core.std.LoadPlugin("tonemapper.dll")  # skip this line if it autoloads
         print("VapourSynth:", core.core_version)
-        print("plugin:", next(p.version for p in core.plugins() if p.namespace == "tonemapper"))
         print("Info:", core.tonemapper.Info())
         ```
       render: text

@@ -1,5 +1,5 @@
 {
-  "include": ["reference", "bench"],
+  "include": ["reference", "bench", ".github/scripts"],
   "exclude": ["**/.venv", "**/__pycache__"],
   "venvPath": "reference",
   "venv": ".venv",

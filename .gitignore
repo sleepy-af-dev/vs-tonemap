@@ -5,6 +5,7 @@
 build/
 build-f32/
 out/
+dist/
 compile_commands.json
 *.dll
 *.pdb

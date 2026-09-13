@@ -34,8 +34,8 @@ jobs:
       - run: uv sync --locked --project reference
       # ruff.toml and pyrightconfig.json are at the root, so both tools run
       # from there rather than from inside the reference project.
-      - run: uv run --project reference ruff format --check reference bench
-      - run: uv run --project reference ruff check reference bench
+      - run: uv run --project reference ruff format --check reference bench .github/scripts
+      - run: uv run --project reference ruff check reference bench .github/scripts
       - run: uv run --project reference basedpyright
 
   test:
@@ -68,4 +68,4 @@ jobs:
       # without AVX-512 exercises fewer kernels than a machine that has it.
       # The three real-clip tests skip: their footage is not in the repository.
       - name: Test
-        run: uv run --project reference pytest reference -q
+        run: uv run --project reference pytest reference .github/scripts -q

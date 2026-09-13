@@ -120,6 +120,18 @@ def test_the_shipped_build_uses_double_lanes(plugin):
     assert plugin.Info()["ictcp_float32_lanes"] == 0
 
 
+def test_info_reports_the_version_in_full(plugin):
+    """A plugin version packs no patch, so Info() is where a 0.1.1 names itself.
+
+    Both come from the same three constants, so this fails only if that
+    derivation is broken, which is exactly when a release would claim a
+    version it is not.
+    """
+    major, minor, patch = (int(part) for part in plugin.Info()["version"].split("."))
+    assert (major, minor) == (plugin.version.major, plugin.version.minor)
+    assert patch >= 0
+
+
 @pytest.mark.parametrize("representation", REPRESENTATIONS)
 def test_tone_mapping_simd_matches_scalar(plugin, fixtures, representation, target):
     meta, arrays = fixtures
