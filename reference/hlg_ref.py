@@ -68,3 +68,31 @@ def black_lift(lw, lb, gamma=None):
     if gamma is None:
         gamma = system_gamma(lw)
     return float(np.sqrt(3.0 * (lb / lw) ** (1.0 / gamma)))
+
+
+# --- The OETF and its inverse, BT.2100-3 Table 5 Note 5a -------------------
+
+
+def hlg_oetf(e):
+    """Scene linear [0, 1] to HLG signal [0, 1].
+
+    Not used by the filter, which only ever decodes. It is here so tests can
+    build HLG signal from known scene light and so the round trip can be
+    checked in both directions.
+    """
+    e = np.clip(np.asarray(e, dtype=np.float64), 0.0, 1.0)
+    # np.where evaluates both branches, and 12e - b is negative for e below
+    # b/12 = 0.0237. The floor keeps the log defined; the value is discarded.
+    log_arg = np.maximum(12.0 * e - B, np.finfo(np.float64).tiny)
+    return np.where(e <= 1.0 / 12.0, np.sqrt(3.0 * e), A * np.log(log_arg) + C)
+
+
+def hlg_inverse_oetf(ep):
+    """HLG signal [0, 1] to scene linear [0, 1].
+
+    The input is clamped to [0, 1] because that is the whole domain HLG
+    defines. Chroma upsampling ringing and limited-range codes outside 64 to
+    940 both produce samples beyond it.
+    """
+    ep = np.clip(np.asarray(ep, dtype=np.float64), 0.0, 1.0)
+    return np.where(ep <= 0.5, ep * ep / 3.0, (np.exp((ep - C) / A) + B) / 12.0)

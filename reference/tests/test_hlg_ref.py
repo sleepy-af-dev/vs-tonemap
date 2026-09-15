@@ -124,3 +124,58 @@ def test_black_lift_inverts_the_eotf_at_zero_signal(lw, lb):
     beta = black_lift(lw, lb, gamma)
     scene = beta * beta / 3.0  # the inverse OETF's lower branch
     assert lw * scene**gamma == pytest.approx(lb, rel=1e-12)
+
+
+from hlg_ref import hlg_inverse_oetf, hlg_oetf  # noqa: E402
+
+
+def test_oetf_branches_meet_at_the_breakpoint():
+    """Note 5a splits at E = 1/12, where both branches must give E' = 0.5."""
+    assert hlg_oetf(1.0 / 12.0) == pytest.approx(0.5, abs=1e-12)
+    assert A * np.log(12.0 / 12.0 - B) + C == pytest.approx(0.5, abs=1e-7)
+
+
+def test_inverse_oetf_branches_meet_at_the_breakpoint():
+    assert hlg_inverse_oetf(0.5) == pytest.approx(1.0 / 12.0, abs=1e-12)
+
+
+def test_oetf_round_trips():
+    """Both directions are in Note 5a, so the pair has to be an identity.
+
+    The tolerance is not float64 exact because b and c are used as the
+    decimals Note 5c prints rather than as their defining formulae, which
+    leaves the log branch about 2e-8 off a perfect inverse.
+    """
+    scene = np.concatenate([[0.0], np.geomspace(1e-9, 1.0, 5000)])
+    assert hlg_inverse_oetf(hlg_oetf(scene)) == pytest.approx(scene, abs=3e-8)
+
+
+def test_inverse_oetf_round_trips():
+    signal = np.linspace(0.0, 1.0, 5001)
+    assert hlg_oetf(hlg_inverse_oetf(signal)) == pytest.approx(signal, abs=3e-8)
+
+
+def test_oetf_endpoints():
+    """Scene 0 gives signal 0, scene 1 gives signal 1."""
+    assert hlg_oetf(0.0) == pytest.approx(0.0, abs=1e-15)
+    assert hlg_oetf(1.0) == pytest.approx(1.0, abs=3e-8)
+
+
+def test_inverse_oetf_is_monotone():
+    signal = np.linspace(0.0, 1.0, 20001)
+    assert np.all(np.diff(hlg_inverse_oetf(signal)) >= 0.0)
+
+
+def test_both_directions_clamp_to_their_domain():
+    """HLG is defined on [0, 1] only.
+
+    Out-of-range samples arrive from chroma upsampling ringing and from
+    limited-range codes outside 64 to 940, so they have to land somewhere
+    rather than produce a NaN from a log or a negative root.
+    """
+    assert hlg_inverse_oetf(-0.4) == pytest.approx(0.0, abs=1e-15)
+    assert hlg_inverse_oetf(1.9) == pytest.approx(hlg_inverse_oetf(1.0), abs=1e-15)
+    assert hlg_oetf(-0.4) == pytest.approx(0.0, abs=1e-15)
+    assert hlg_oetf(1.9) == pytest.approx(hlg_oetf(1.0), abs=1e-15)
+    assert np.all(np.isfinite(hlg_oetf(np.linspace(-1.0, 2.0, 501))))
+    assert np.all(np.isfinite(hlg_inverse_oetf(np.linspace(-1.0, 2.0, 501))))
