@@ -20,6 +20,8 @@ Sources:
 
 import numpy as np
 
+from bt2390_ref import LUMA_BT2020_PRINTED
+
 # --- Constants, BT.2100-3 Table 5 Notes 5b and 5c --------------------------
 
 A = 0.17883277
@@ -96,3 +98,70 @@ def hlg_inverse_oetf(ep):
     """
     ep = np.clip(np.asarray(ep, dtype=np.float64), 0.0, 1.0)
     return np.where(ep <= 0.5, ep * ep / 3.0, (np.exp((ep - C) / A) + B) / 12.0)
+
+
+# --- The OOTF and the reference EOTF, BT.2100-3 Table 5 --------------------
+
+
+def _luminance_scalar(y, exponent):
+    """y**exponent, taken as 0 where y is not positive.
+
+    Below a peak of about 301 cd/m2 the system gamma falls under 1, so the
+    exponent is negative and y**exponent at y = 0 is infinity. Multiplied by
+    a channel of zero that is NaN, which would make every black pixel NaN on
+    a low-peak render. Exact black is the only input that reaches this,
+    because the scene values are clamped non-negative upstream.
+    """
+    ok = y > 0.0
+    return np.where(ok, np.where(ok, y, 1.0) ** exponent, 0.0)
+
+
+def ootf(scene, lw=1000.0, gamma=None):
+    """Scene linear RGB to display linear RGB in cd/m2.
+
+    Table 5: F_D = alpha Y_S^(gamma - 1) E, with alpha equal to L_W. One
+    scalar derived from scene luminance scales all three channels, which is
+    what leaves chromaticity untouched. alpha is L_W and not L_W - L_B; the
+    black level is carried by beta in the EOTF, and the two together put a
+    signal of 0 on exactly L_B.
+    """
+    if gamma is None:
+        gamma = system_gamma(lw)
+    scene = np.asarray(scene, dtype=np.float64)
+    ys = scene @ LUMA_BT2020_PRINTED
+    return lw * _luminance_scalar(ys, gamma - 1.0)[..., None] * scene
+
+
+def inverse_ootf(display, lw=1000.0, gamma=None):
+    """Display linear RGB in cd/m2 to scene linear RGB.
+
+    Not used by the filter. It is here so tests can build HLG signal from
+    known display light, which is how the round trip is checked.
+    """
+    if gamma is None:
+        gamma = system_gamma(lw)
+    display = np.asarray(display, dtype=np.float64)
+    yd = display @ LUMA_BT2020_PRINTED
+    scalar = _luminance_scalar(yd / lw, (1.0 - gamma) / gamma)
+    return (display / lw) * scalar[..., None]
+
+
+def hlg(signal, lw=1000.0, lb=0.0, nominal_luminance=100.0):
+    """The HLG Reference EOTF of Table 5, rescaled for the tone mapper.
+
+    Input is the HLG signal, an (..., 3) array of R'G'B' in [0, 1]. Output is
+    linear BT.2020 scaled so 1.0 means nominal_luminance cd/m2, which is what
+    BT2390 expects on its input and what resize's nominal_luminance means.
+
+    Table 5 states the EOTF as
+    F_D = OOTF[ OETF^-1[ max(0, (1 - beta) E' + beta) ] ]. The max is applied
+    to the lifted signal rather than to E', which matters only when beta is
+    non-zero and the input is negative.
+    """
+    if not np.isfinite(nominal_luminance) or nominal_luminance <= 0.0:
+        raise ValueError(f"nominal_luminance must be positive, got {nominal_luminance}")
+    gamma = system_gamma(lw)
+    beta = black_lift(lw, lb, gamma)
+    signal = np.asarray(signal, dtype=np.float64)
+    lifted = np.maximum(0.0, (1.0 - beta) * signal + beta)
+    return ootf(hlg_inverse_oetf(lifted), lw, gamma) / nominal_luminance
