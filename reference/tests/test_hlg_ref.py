@@ -132,7 +132,9 @@ from hlg_ref import hlg_inverse_oetf, hlg_oetf  # noqa: E402
 def test_oetf_branches_meet_at_the_breakpoint():
     """Note 5a splits at E = 1/12, where both branches must give E' = 0.5."""
     assert hlg_oetf(1.0 / 12.0) == pytest.approx(0.5, abs=1e-12)
-    assert A * np.log(12.0 / 12.0 - B) + C == pytest.approx(0.5, abs=1e-7)
+    # The log branch reaches 0.500000000470 here: c as printed sits 4.7e-10
+    # above c derived from 0.5 - a ln(4a), and that is the whole gap.
+    assert A * np.log(12.0 / 12.0 - B) + C == pytest.approx(0.5, abs=1e-9)
 
 
 def test_inverse_oetf_branches_meet_at_the_breakpoint():
@@ -142,23 +144,50 @@ def test_inverse_oetf_branches_meet_at_the_breakpoint():
 def test_oetf_round_trips():
     """Both directions are in Note 5a, so the pair has to be an identity.
 
-    The tolerance is not float64 exact because b and c are used as the
-    decimals Note 5c prints rather than as their defining formulae, which
-    leaves the log branch about 2e-8 off a perfect inverse.
+    Exactly an identity, in fact: composing them cancels a, b and c
+    algebraically, so the residual here is float64 noise and nothing else.
+    Measured worst case is 6.7e-16.
     """
     scene = np.concatenate([[0.0], np.geomspace(1e-9, 1.0, 5000)])
-    assert hlg_inverse_oetf(hlg_oetf(scene)) == pytest.approx(scene, abs=3e-8)
+    assert hlg_inverse_oetf(hlg_oetf(scene)) == pytest.approx(scene, abs=1e-15)
 
 
-def test_inverse_oetf_round_trips():
-    signal = np.linspace(0.0, 1.0, 5001)
-    assert hlg_oetf(hlg_inverse_oetf(signal)) == pytest.approx(signal, abs=3e-8)
+def test_inverse_oetf_round_trips_over_the_interior():
+    """Everywhere except the top of the domain this is float64 exact.
+
+    Measured worst case over the interior is 1.1e-16. The endpoint is a
+    separate case with its own cause; see the next test.
+    """
+    signal = np.linspace(0.0, 1.0, 5001)[:-1]
+    assert hlg_oetf(hlg_inverse_oetf(signal)) == pytest.approx(signal, abs=1e-15)
+
+
+def test_the_top_of_the_domain_loses_about_4e_9_to_the_clamp():
+    """A signal of exactly 1 is the one place the round trip is not tight.
+
+    The printed constants do not put the log branch exactly on scene 1.0 at
+    a signal of 1.0: the inverse overshoots by 2.4e-8. hlg_oetf then clamps
+    that back to 1.0 before encoding, and encoding 1.0 gives 0.9999999955.
+    So the residual is the clamp meeting the overshoot.
+
+    It is not caused by taking b and c as the decimals Note 5c prints
+    rather than as their defining formulae. b is bit-identical either way,
+    c differs by 4.7e-10, and substituting the derived pair makes this
+    slightly worse (4.9e-9 against 4.5e-9) rather than better. Anyone
+    tempted to "fix" the imprecision that way should not bother.
+    """
+    overshoot = float(hlg_inverse_oetf(np.array(1.0))) - 1.0
+    assert overshoot == pytest.approx(2.437e-8, rel=1e-3)
+    assert float(hlg_oetf(hlg_inverse_oetf(np.array(1.0)))) == pytest.approx(
+        1.0, abs=1e-8
+    )
 
 
 def test_oetf_endpoints():
     """Scene 0 gives signal 0, scene 1 gives signal 1."""
     assert hlg_oetf(0.0) == pytest.approx(0.0, abs=1e-15)
-    assert hlg_oetf(1.0) == pytest.approx(1.0, abs=3e-8)
+    # 4.5e-9 short, for the reason the previous test documents.
+    assert hlg_oetf(1.0) == pytest.approx(1.0, abs=1e-8)
 
 
 def test_inverse_oetf_is_monotone():
