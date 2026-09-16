@@ -8,7 +8,9 @@ build() returns (meta, arrays). meta lists the cases with the exact
 parameters each was produced with. Each tone-mapping case `name` contributes
 `tm/<name>/in` and, for each of the five representations,
 `tm/<name>/<representation>`; each gamut case contributes `gm/<name>/in` and
-`gm/<name>/out`. All arrays are (N, 3) float64, linear BT.2020 RGB on input.
+`gm/<name>/out`; each HLG case contributes `hlg/<name>/in` and
+`hlg/<name>/out`. All arrays are (N, 3) float64, linear BT.2020 RGB on input,
+except the HLG cases, whose input is HLG signal rather than linear light.
 The consumer decides how to shape them into a frame.
 """
 
@@ -34,6 +36,7 @@ from bt2407_ref import (
     uv_to_xyz,
     xyz_to_uv,
 )
+from hlg_ref import hlg
 
 NOMINAL = 100.0  # cd/m2 that 1.0 means on the tone mapper's input
 XYZ_TO_RGB2020 = np.linalg.inv(RGB2020_TO_XYZ)
@@ -152,6 +155,95 @@ GAMUT_CASES: dict[str, dict[str, Any]] = {
     "softclip_beta_half": dict(method="softclip", src_gamut="bt2020", beta=0.5),
 }
 
+HLG_CASES: dict[str, dict[str, Any]] = {
+    # The reference display BT.2100 and BT.2408 are both written around.
+    "default": dict(lw=1000.0, lb=0.0, nominal_luminance=NOMINAL),
+    # Outside the 400 to 2000 range, so Note 5f's extended gamma formula
+    # applies instead of the simple one.
+    "mastered_4000": dict(lw=4000.0, lb=0.0, nominal_luminance=NOMINAL),
+    # A peak low enough that the system gamma falls below 1, which makes the
+    # OOTF exponent negative and the black guard load-bearing. 300 would not
+    # do: gamma there is 0.99949, so the case would pass on a near-correct
+    # implementation.
+    "low_peak_200": dict(lw=200.0, lb=0.0, nominal_luminance=NOMINAL),
+    # A non-zero black, so beta is not zero and the lift is exercised.
+    "lifted_black": dict(lw=1000.0, lb=0.05, nominal_luminance=NOMINAL),
+    # The same signal reached through a different output scale.
+    "nominal_203": dict(lw=1000.0, lb=0.0, nominal_luminance=203.0),
+}
+
+
+def hlg_input():
+    """Every interesting HLG signal, as (N, 3) R'G'B' in and around [0, 1].
+
+    Signal rather than luminance: this filter's input is the non-linear HLG
+    code, not light. The levels that matter are the OETF branch switch at
+    0.5, HDR reference white at 0.75, the ends, and saturated colours, where
+    the luminance-driven OOTF differs most from a per-channel one.
+    """
+    # The 10-bit limited-range codes the grayscale patch set uses. Not a clean
+    # arithmetic run: the step from patch 50 to 55 is 40 rather than 44.
+    patch_codes = np.array(
+        [
+            64,
+            108,
+            152,
+            196,
+            240,
+            284,
+            328,
+            372,
+            416,
+            460,
+            504,
+            544,
+            588,
+            632,
+            676,
+            720,
+            764,
+            808,
+            852,
+            896,
+            940,
+        ],
+        dtype=np.float64,
+    )
+    levels = np.unique(
+        np.concatenate(
+            [
+                np.linspace(0.0, 1.0, 512),
+                # The branch at E' = 0.5 and its immediate neighbourhood.
+                [0.5 - 1e-9, 0.5, 0.5 + 1e-9],
+                # HDR reference white.
+                [0.75],
+                (patch_codes - 64.0) / (940.0 - 64.0),
+            ]
+        )
+    )
+    rng = np.random.default_rng(20260916)
+
+    return np.vstack(
+        [
+            np.repeat(levels[:, None], 3, axis=1),  # neutrals
+            levels[:, None] * CORNERS[0],  # a ramp per channel
+            levels[:, None] * CORNERS[1],
+            levels[:, None] * CORNERS[2],
+            scaled(CORNERS, [0.25, 0.5, 0.75, 1.0]),  # primaries and secondaries
+            np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [1.0, 1.0, 1.0],
+                    [-0.2, 0.5, 0.3],  # a negative channel
+                    [1.4, 0.5, 0.3],  # a channel above the domain
+                    [2.0, -1.0, 0.0],  # both at once
+                    [1e-9, 0.0, 0.0],  # barely above black
+                ]
+            ),
+            rng.random((2000, 3)),
+        ]
+    )
+
 
 def gamut_input(tone_mapped):
     """Tone mapper output plus colours the report does not contemplate."""
@@ -193,7 +285,7 @@ def parameters(case):
 def build():
     """(meta, arrays) for every case. Cheap enough to call from each test."""
     arrays = {}
-    meta = {"tone": {}, "gamut": {}}
+    meta = {"tone": {}, "gamut": {}, "hlg": {}}
 
     settings = {name: parameters(name) for name in TONE_CASES}
     knees = [
@@ -220,5 +312,15 @@ def build():
         arrays[f"gm/{name}/out"] = out
         meta["gamut"][name] = dict(params, label=label)
 
-    meta["points"] = {"tone": int(rgb_cd.shape[0]), "gamut": int(gamut_in.shape[0])}
+    hlg_in = hlg_input()
+    for name, params in HLG_CASES.items():
+        arrays[f"hlg/{name}/in"] = hlg_in
+        arrays[f"hlg/{name}/out"] = hlg(hlg_in, **params)
+        meta["hlg"][name] = dict(params)
+
+    meta["points"] = {
+        "tone": int(rgb_cd.shape[0]),
+        "gamut": int(gamut_in.shape[0]),
+        "hlg": int(hlg_in.shape[0]),
+    }
     return meta, arrays

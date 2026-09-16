@@ -13,6 +13,24 @@ endif()
 # and exists only so the decision rests on a number rather than a guess.
 option(TONEMAP_FLOAT32_ICTCP "build the ictcp kernel with float lanes" OFF)
 
+# The option was TONEMAPPER_FLOAT32_ICTCP before the project was renamed. A
+# build directory whose cache still holds the old name silently builds double
+# lanes while claiming float, so refuse rather than ignore it. Only a build
+# directory that predates the rename can trip this; a fresh clone never
+# defines the old name, so the guard is here purely for whoever still has one
+# of those directories around and can go once that stops being a concern.
+if(DEFINED TONEMAPPER_FLOAT32_ICTCP)
+  message(FATAL_ERROR
+    "TONEMAPPER_FLOAT32_ICTCP is the pre-rename name and is not read. "
+    "Use -DTONEMAP_FLOAT32_ICTCP=${TONEMAPPER_FLOAT32_ICTCP}, and delete the "
+    "stale entry with: cmake -U TONEMAPPER_FLOAT32_ICTCP <build-dir>")
+endif()
+if(TONEMAP_FLOAT32_ICTCP)
+  message(STATUS "ictcp kernel lanes: float")
+else()
+  message(STATUS "ictcp kernel lanes: double")
+endif()
+
 # Link the C and C++ runtimes statically. The plugin is distributed as one DLL
 # that someone drops into an autoload directory, and a dynamic CRT makes that
 # fail on any machine without the Microsoft Visual C++ redistributable, with an
@@ -35,8 +53,8 @@ FetchContent_Declare(highway
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(highway)
 
-# SLEEF: vector math. Only its pow is used, from the static library, whose
-# per-instruction-set objects carry their own compiler flags. src/simd.cpp
+# SLEEF: vector math. Only its pow and exp are used, from the static library,
+# whose per-instruction-set objects carry their own compiler flags. src/simd.cpp
 # declares the entry points it needs, because the header hides them behind
 # macros Highway never sets. Nothing else SLEEF builds is wanted.
 set(SLEEF_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
@@ -51,7 +69,8 @@ FetchContent_Declare(sleef
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(sleef)
 
-add_library(vs-tonemap MODULE src/plugin.cpp src/bt2390.cpp src/bt2407.cpp src/simd.cpp)
+add_library(vs-tonemap MODULE
+  src/plugin.cpp src/bt2390.cpp src/bt2407.cpp src/hlg.cpp src/simd.cpp)
 set_target_properties(vs-tonemap PROPERTIES
   PREFIX ""
   CXX_VISIBILITY_PRESET hidden

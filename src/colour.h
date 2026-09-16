@@ -14,9 +14,19 @@
 #define TONEMAP_COLOUR_H
 
 #include <cmath>
+#include <cstdio>
 #include <string>
 
 namespace tonemap {
+
+// A short, human-readable rendering of a number for an error message: %g,
+// which is the precision every luminance and ratio in these messages already
+// prints at.
+inline std::string describe(double value) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%g", value);
+    return text;
+}
 
 // --- PQ, BT.2100-3 Table 4 -------------------------------------------------
 
@@ -169,7 +179,11 @@ inline constexpr Mat3 kLmsToRgb2020 = inverse(kRgb2020ToLms);
 // are signal coefficients rather than CIE luminance, so yrgb and ycbcr use
 // them exactly as printed; the exact BT.2020 row differs by up to 2.9e-5
 // relative on blue, which is above float32 tolerance. The gamut mapper, where
-// Y really is luminance, uses the exact row instead.
+// Y really is luminance, uses the exact row instead. HLG's OOTF is a third
+// consumer, and an interesting one: Y_S there genuinely is luminance, yet
+// the printed coefficients are still the right ones, because Table 5 prints
+// them itself as what the OOTF sums rather than leaving them to be derived
+// from the BT.2020 primaries.
 inline constexpr double kKr = 0.2627;
 inline constexpr double kKg = 0.6780;
 inline constexpr double kKb = 0.0593;

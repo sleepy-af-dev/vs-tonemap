@@ -7,6 +7,9 @@ thread and are the kernel; frames per second are measured on every
 thread and are what a script sees. Neither figure includes the two
 resize stages a real chain carries.
 
+Written by `bench/benchmark.py --sweep --write`; hand edits here do not
+survive the next run.
+
 ## Machine
 
 - CPU: AMD Ryzen 9 9950X3D, 32 logical cores
@@ -18,13 +21,14 @@ resize stages a real chain carries.
 
 | filter | path | scalar ns/px | SIMD ns/px | scalar fps | SIMD fps | speedup |
 |---|---|---|---|---|---|---|
-| BT2390 | ictcp | 192.4 | 48.3 | 12.87 | 48.30 | 3.98x |
-| BT2390 | ycbcr | 183.4 | 48.5 | 13.59 | 48.46 | 3.78x |
-| BT2390 | yrgb | 85.9 | 18.2 | 31.84 | 78.52 | 4.71x |
-| BT2390 | rgb | 230.7 | 52.5 | 12.35 | 46.46 | 4.40x |
-| BT2390 | maxrgb | 85.6 | 18.1 | 31.93 | 78.08 | 4.72x |
-| BT2407 | clip | 1.0 | 0.7 | 88.45 | 88.69 | 1.48x |
-| BT2407 | softclip | 8.2 | 3.9 | 79.70 | 83.30 | 2.10x |
+| BT2390 | ictcp | 156.4 | 48.3 | 14.22 | 47.84 | 3.24x |
+| BT2390 | ycbcr | 152.0 | 48.5 | 15.03 | 48.05 | 3.14x |
+| BT2390 | yrgb | 72.9 | 18.2 | 33.90 | 78.56 | 4.01x |
+| BT2390 | rgb | 191.5 | 52.3 | 13.28 | 46.74 | 3.66x |
+| BT2390 | maxrgb | 71.9 | 18.1 | 34.16 | 78.99 | 3.97x |
+| BT2407 | clip | 0.9 | 0.7 | 83.87 | 84.45 | 1.35x |
+| BT2407 | softclip | 8.4 | 4.2 | 78.85 | 82.44 | 1.99x |
+| HLG | - | 13.5 | 6.9 | 82.80 | 79.82 | 1.96x |
 
 ## End to end
 
@@ -32,13 +36,22 @@ The whole script of section 4.3 over a synthetic 4K PQ source: the
 resize into linear RGBS, both filters, and the resize back out to
 10-bit YUV. This is what the design's target refers to.
 
-- 34.24 frames per second, ictcp and softclip, on 32 threads
-- Peak working set 7.3 GB, measured in a process
+- 35.18 frames per second, ictcp and softclip, on 32 threads
+- Peak working set 7.9 GB, measured in a process
   that ran nothing but this chain
 
 A 4K RGBS frame is 100 MB and the model is frame-parallel, so the
 memory a chain needs scales with the thread count. Lower
 core.num_threads or core.max_cache_size to trade throughput for it.
+
+The same shape over a synthetic 4K HLG source instead: resize into
+HLG-tagged RGBS, decode, both filters, and the resize back out. The
+source carries no mastering display metadata, so BT2390 reads its
+src_max from what HLG itself writes rather than from the clip.
+
+- 30.44 frames per second, ictcp and softclip, on 32 threads
+- Peak working set 7.7 GB, measured in a process
+  that ran nothing but this chain
 
 ## What the precision costs
 
@@ -46,9 +59,13 @@ The ictcp kernel built a second time with float lanes and SLEEF's
 float pow, everything else unchanged. It is not a shipped path and
 exists so the choice of double rests on a measurement.
 
-- double lanes: 48.30 fps
-- float lanes: 63.53 fps
+- double lanes: 47.84 fps
+- float lanes: 63.20 fps
 - ratio: 1.32x
+
+The double-lane figure is this sweep's own ictcp row; the float-lane
+figure is from a separate --dll run of the float32 build, so the two
+numbers are never from the same invocation of the process.
 
 Against the float64 oracle the float kernel reaches 2.5e-04
 absolute and 9.9% relative, against frozen gates of 1.2e-07 for

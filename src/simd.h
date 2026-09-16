@@ -11,6 +11,7 @@
 
 #include "bt2390.h"
 #include "bt2407.h"
+#include "hlg.h"
 
 namespace tonemap {
 
@@ -21,6 +22,9 @@ void toneMapRowSimd(const float* srcR, const float* srcG, const float* srcB,
 void gamutMapRowSimd(const float* srcR, const float* srcG, const float* srcB,
                      float* dstR, float* dstG, float* dstB, size_t width,
                      const GamutParams& params);
+
+void hlgRowSimd(const float* srcR, const float* srcG, const float* srcB, float* dstR,
+                float* dstG, float* dstB, size_t width, const HlgParams& params);
 
 // The Highway target chosen for this machine, for the benchmark log and for
 // the test that checks dispatch landed where it should.

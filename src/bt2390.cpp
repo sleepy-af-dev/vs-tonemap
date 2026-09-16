@@ -45,12 +45,6 @@ bool parseRepresentation(const char* name, Representation* out) {
     return false;
 }
 
-static std::string describe(double value) {
-    char text[32];
-    std::snprintf(text, sizeof(text), "%g", value);
-    return text;
-}
-
 std::string checkLuminance(const char* name, double value) {
     if (!std::isfinite(value) || value < 0.0 || value > kPqPeak) {
         return std::string(name) + " must be a luminance from 0 to 10000 cd/m2, got " +

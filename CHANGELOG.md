@@ -11,6 +11,19 @@ is what a bug report should quote.
 
 ## [Unreleased]
 
+### Added
+
+- `HLG`, decoding Hybrid Log-Gamma to display-referred linear light through
+  the OOTF of ITU-R BT.2100-3 Table 5, so an HLG source can feed straight
+  into the existing `BT2390` and `BT2407` stages. `lw` and `lb` come from
+  `MasteringDisplayMaxLuminance` and `MasteringDisplayMinLuminance` when not
+  given as arguments, defaulting to 1000 and 0 cd/m2 since most HLG content
+  carries no mastering metadata. Feed it the HLG signal rather than linear
+  light: the OOTF needs all three channels at once, so a resizer's transfer
+  function cannot apply it. Asking `resize` for `transfer_s="linear"`
+  substitutes the per-channel approximation of Note 5e, which measures 76%
+  too bright on a fully saturated blue against Table 5.
+
 ## [0.1.0] - 2026-09-13
 
 ### Added

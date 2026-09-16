@@ -10,6 +10,7 @@
 
 #include "bt2390.h"
 #include "bt2407.h"
+#include "hlg.h"
 #include "simd.h"
 
 namespace {
@@ -83,8 +84,12 @@ std::string checkTag(const VSMap* props, const VSAPI* vsapi, const char* key,
            "needs " + what + " (" + std::to_string(expected) + ")";
 }
 
-std::string checkFrameTags(const VSMap* props, const VSAPI* vsapi) {
-    std::string bad = checkTag(props, vsapi, "_Transfer", VSC_TRANSFER_LINEAR, "linear light");
+// `transfer` and `transferName` are the transfer characteristic this caller
+// requires and the words its error message uses. The primaries and range
+// checks are the same for every filter here.
+std::string checkFrameTags(const VSMap* props, const VSAPI* vsapi, int64_t transfer,
+                           const char* transferName) {
+    std::string bad = checkTag(props, vsapi, "_Transfer", transfer, transferName);
     if (!bad.empty()) return bad;
     bad = checkTag(props, vsapi, "_Primaries", VSC_PRIMARIES_BT2020, "BT.2020 primaries");
     if (!bad.empty()) return bad;
@@ -119,7 +124,7 @@ bool readMasteringLuminance(const VSMap* props, const VSAPI* vsapi, const char* 
 
 std::string resolveFrameParams(const FilterData* d, const VSMap* props,
                                const VSAPI* vsapi, FrameParams* out) {
-    std::string bad = checkFrameTags(props, vsapi);
+    std::string bad = checkFrameTags(props, vsapi, VSC_TRANSFER_LINEAR, "linear light");
     if (!bad.empty()) return bad;
 
     // The peak is reported first because it is the one that shapes the curve.
@@ -239,6 +244,165 @@ double optionalFloat(const VSMap* in, const VSAPI* vsapi, const char* key,
     return err == 0 ? value : fallback;
 }
 
+// --- HLG -------------------------------------------------------------------
+
+using tonemap::HlgParams;
+
+struct HlgFilterData {
+    VSNode* node;
+    VSVideoInfo vi;
+    bool simd;
+    double nominal;
+    // Absent means read the value from the frame properties instead.
+    bool haveLw;
+    bool haveLb;
+    double lw;
+    double lb;
+};
+
+std::string resolveHlgParams(const HlgFilterData* d, const VSMap* props,
+                             const VSAPI* vsapi, HlgParams* out) {
+    std::string bad =
+        checkFrameTags(props, vsapi, VSC_TRANSFER_ARIB_B67, "HLG (ARIB STD-B67)");
+    if (!bad.empty()) return bad;
+
+    // Unlike src_max on BT2390 these have a default rather than an error.
+    // HLG is display-independent by design and most HLG content carries no
+    // mastering metadata at all; 1000 cd/m2 is the reference display both
+    // BT.2100 and BT.2408 are written around.
+    double lw = d->lw;
+    double lb = d->lb;
+    const char* lwName = "lw";
+    const char* lbName = "lb";
+    if (!d->haveLw) {
+        lwName = "MasteringDisplayMaxLuminance";
+        if (!readMasteringLuminance(props, vsapi, lwName, true, &lw)) {
+            lw = 1000.0;
+            lwName = "lw";
+        }
+    }
+    if (!d->haveLb) {
+        lbName = "MasteringDisplayMinLuminance";
+        if (!readMasteringLuminance(props, vsapi, lbName, false, &lb)) {
+            lb = 0.0;
+            lbName = "lb";
+        }
+    }
+
+    return tonemap::makeHlgParams(lw, lb, d->nominal, lwName, lbName, out);
+}
+
+const VSFrame* VS_CC hlgGetFrame(int n, int activationReason, void* instanceData, void**,
+                                 VSFrameContext* frameCtx, VSCore* core,
+                                 const VSAPI* vsapi) {
+    auto* d = static_cast<HlgFilterData*>(instanceData);
+    if (activationReason == arInitial) {
+        vsapi->requestFrameFilter(n, d->node, frameCtx);
+        return nullptr;
+    }
+    if (activationReason != arAllFramesReady) return nullptr;
+
+    const VSFrame* src = vsapi->getFrameFilter(n, d->node, frameCtx);
+
+    HlgParams params{};
+    const std::string bad =
+        resolveHlgParams(d, vsapi->getFramePropertiesRO(src), vsapi, &params);
+    if (!bad.empty()) {
+        vsapi->setFilterError(("HLG: " + bad).c_str(), frameCtx);
+        vsapi->freeFrame(src);
+        return nullptr;
+    }
+
+    const int width = vsapi->getFrameWidth(src, 0);
+    const int height = vsapi->getFrameHeight(src, 0);
+    VSFrame* dst = vsapi->newVideoFrame(&d->vi.format, width, height, src, core);
+
+    for (int y = 0; y < height; ++y) {
+        const float* srcPlane[3];
+        float* dstPlane[3];
+        for (int p = 0; p < 3; ++p) {
+            const ptrdiff_t srcStride =
+                vsapi->getStride(src, p) / static_cast<ptrdiff_t>(sizeof(float));
+            const ptrdiff_t dstStride =
+                vsapi->getStride(dst, p) / static_cast<ptrdiff_t>(sizeof(float));
+            srcPlane[p] =
+                reinterpret_cast<const float*>(vsapi->getReadPtr(src, p)) + y * srcStride;
+            dstPlane[p] =
+                reinterpret_cast<float*>(vsapi->getWritePtr(dst, p)) + y * dstStride;
+        }
+        const auto row = d->simd ? tonemap::hlgRowSimd : tonemap::hlgRow;
+        row(srcPlane[0], srcPlane[1], srcPlane[2], dstPlane[0], dstPlane[1], dstPlane[2],
+            static_cast<size_t>(width), params);
+    }
+
+    VSMap* outProps = vsapi->getFramePropertiesRW(dst);
+    vsapi->mapSetInt(outProps, "_Transfer", VSC_TRANSFER_LINEAR, maReplace);
+    vsapi->mapSetInt(outProps, "_Primaries", VSC_PRIMARIES_BT2020, maReplace);
+    vsapi->mapSetInt(outProps, "_Range", kRangeFull, maReplace);
+    // After the OOTF the frame is a display-referred rendering for a display
+    // of peak lw, so these describe the frame they are attached to. They are
+    // also what lets BT2390 run on the result with no arguments.
+    // Both come from params rather than from d, because either may have been
+    // read from a frame property rather than given as an argument.
+    vsapi->mapSetFloat(outProps, "MasteringDisplayMaxLuminance", params.lw, maReplace);
+    vsapi->mapSetFloat(outProps, "MasteringDisplayMinLuminance", params.lb, maReplace);
+
+    vsapi->freeFrame(src);
+    return dst;
+}
+
+void VS_CC hlgFreeFilter(void* instanceData, VSCore*, const VSAPI* vsapi) {
+    auto* d = static_cast<HlgFilterData*>(instanceData);
+    vsapi->freeNode(d->node);
+    delete d;
+}
+
+void VS_CC hlgCreate(const VSMap* in, VSMap* out, void*, VSCore* core,
+                     const VSAPI* vsapi) {
+    VSNode* node = vsapi->mapGetNode(in, "clip", 0, nullptr);
+    auto fail = [&](const std::string& message) {
+        vsapi->mapSetError(out, ("HLG: " + message).c_str());
+        vsapi->freeNode(node);
+    };
+
+    const VSVideoInfo* vi = vsapi->getVideoInfo(node);
+    if (!isRgbs(vi)) {
+        fail("clip must be RGBS, that is 32-bit float RGB with a constant format "
+             "and constant dimensions");
+        return;
+    }
+
+    auto* d = new HlgFilterData{};
+    d->node = node;
+    d->vi = *vi;
+    d->lw = optionalFloat(in, vsapi, "lw", 1000.0, &d->haveLw);
+    d->lb = optionalFloat(in, vsapi, "lb", 0.0, &d->haveLb);
+    d->nominal = optionalFloat(in, vsapi, "nominal_luminance", 100.0, nullptr);
+    d->simd = optionalBool(in, vsapi, "simd", true);
+
+    // Every check whose inputs are all arguments runs here, so the script
+    // fails at evaluation rather than on the first frame. The checks that
+    // need a property-derived value wait for resolveHlgParams. When lw is
+    // not given, this presumes it will resolve to 1000 and checks lb against
+    // that guess rather than against whatever MasteringDisplayMaxLuminance
+    // turns out to hold, so an lb that is fine against the real property can
+    // still be rejected here. Only reachable with an lb above 1000 cd/m2,
+    // which is not a real display black.
+    HlgParams unused{};
+    const std::string bad = tonemap::makeHlgParams(
+        d->haveLw ? d->lw : 1000.0, d->haveLb ? d->lb : 0.0, d->nominal, "lw", "lb",
+        &unused);
+    if (!bad.empty()) {
+        delete d;
+        fail(bad);
+        return;
+    }
+
+    VSFilterDependency deps[] = {{node, rpStrictSpatial}};
+    vsapi->createVideoFilter(out, "HLG", &d->vi, hlgGetFrame, hlgFreeFilter, fmParallel,
+                             deps, 1, d, core);
+}
+
 // --- BT2407 ----------------------------------------------------------------
 
 using tonemap::Chromaticity;
@@ -296,7 +460,8 @@ bool masteringPrimaries(const VSMap* props, const VSAPI* vsapi, Primaries* out) 
 
 std::string resolveGamutParams(const GamutFilterData* d, const VSMap* props,
                                const VSAPI* vsapi, GamutParams* out) {
-    const std::string bad = checkFrameTags(props, vsapi);
+    const std::string bad =
+        checkFrameTags(props, vsapi, VSC_TRANSFER_LINEAR, "linear light");
     if (!bad.empty()) return bad;
 
     out->method = d->method;
@@ -564,4 +729,8 @@ VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin* plugin, const VSPLUGINAPI
                              "dst_min:float:opt;dst_max:float:opt;"
                              "nominal_luminance:float:opt;representation:data:opt;simd:int:opt;",
                              "clip:vnode;", bt2390Create, nullptr, plugin);
+    vspapi->registerFunction("HLG",
+                             "clip:vnode;lw:float:opt;lb:float:opt;"
+                             "nominal_luminance:float:opt;simd:int:opt;",
+                             "clip:vnode;", hlgCreate, nullptr, plugin);
 }

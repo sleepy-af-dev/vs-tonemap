@@ -25,9 +25,10 @@ compile.
 SLEEF
 -----
 
-Vector math library. The shipped DLL uses only its double pow; its float pow
-is used by the comparison build, which is off by default. Fetched at build
-time by CMake, pinned to tag 3.9.0, and statically linked into the DLL.
+Vector math library. The shipped DLL uses its double pow and double exp; its
+float pow is used by the comparison build, which is off by default. Fetched
+at build time by CMake, pinned to tag 3.9.0, and statically linked into the
+DLL.
 
     https://github.com/shibatch/sleef
 

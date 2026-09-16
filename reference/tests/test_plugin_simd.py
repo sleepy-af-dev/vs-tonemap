@@ -71,6 +71,11 @@ def available_targets():
 
 TARGETS = available_targets()
 
+# What an HLG clip carries once resize has done the matrix and range
+# conversion but left the transfer alone. 18 is ARIB STD-B67. Defined locally
+# rather than imported from test_plugin_hlg, which is the module that owns it.
+HLG_BT2020 = {"_Transfer": 18, "_Primaries": 9, "_Range": 1}
+
 
 @contextmanager
 def forced(plugin, name):
@@ -204,6 +209,44 @@ def test_gamut_simd_matches_scalar(plugin, fixtures, target):
         f"\n{target:<10}{'gamut':<8} simd vs scalar: max abs {worst[0]:.3e}, "
         f"max rel {worst[1]:.3e}, max {worst[2]} float32 ULP"
     )
+
+
+def test_hlg_simd_matches_the_scalar_kernel(plugin, fixtures, target):
+    """The scalar kernel is the reference; the vector one must not drift.
+
+    They are not the same instruction sequence, though. Highway's MulAdd
+    contracts to hardware FMA on AVX2 and above: the built objects carry
+    vfmadd213pd and vfmadd231pd in the vector kernel and none at all in
+    the scalar one. The two paths therefore round differently in float64,
+    and often, measured at roughly 3% of the affine lifts and 15% of the
+    luminance sums over this fixture set. FMA is not the only source: the
+    vector kernel now calls SLEEF's exp directly (its u10 variant, documented
+    to 1.0 ULP), while the scalar kernel calls std::exp. How far those two
+    implementations land from each other is unmeasured here; it adds to the
+    FMA divergence above.
+
+    Bit-identity survives that only because the arithmetic is float64 and
+    the frame stores float32. A few ULP of divergence in float64 moves the
+    result by about 2^-51 relative, some 2^27 times smaller than a float32
+    ULP, so it cannot change the stored value. This is the same mechanism
+    the README describes for ictcp, where a longer matrix chain does make
+    the difference visible at one ULP; here the chain is one FMA in the
+    lift and two in the luminance sum, short enough that it never shows.
+
+    Extending this kernel's arithmetic narrows that margin. If this test
+    ever fails, re-measure rather than loosen it.
+    """
+    meta, arrays = fixtures
+    assert plugin.Info(target=target)["target"] == target
+    try:
+        for name, params in meta["hlg"].items():
+            rows = arrays[f"hlg/{name}/in"]
+            clip = make_clip(rows, HLG_BT2020)
+            vector, _ = run(plugin.HLG(clip, simd=1, **params))
+            scalar, _ = run(plugin.HLG(clip, simd=0, **params))
+            assert np.array_equal(vector, scalar), f"{target} {name}"
+    finally:
+        plugin.Info(target="")
 
 
 def test_the_tail_of_a_row_is_handled(plugin, fixtures):

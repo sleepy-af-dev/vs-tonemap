@@ -27,14 +27,16 @@ namespace tonemap {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 
-// --- pow ------------------------------------------------------------------
+// --- pow, exp --------------------------------------------------------------
 //
 // SLEEF's u10 variants, documented to 1.0 ULP. Highway has no Pow, and
 // composing Exp(y * Log(x)) would put the error of two 1 to 4 ULP functions
-// through an outer exponent of 78.84 (section 3.1). The bridge is the `raw`
-// member of Highway's vector wrapper, which is how Highway reaches the
-// intrinsics itself, and the native width is picked per target so that one
-// SLEEF call covers one whole vector.
+// through an outer exponent of 78.84 (section 3.1); SLEEF's u10 exp is
+// documented to 1 ULP where Highway's own contrib Exp is 1 to 4, and contrib
+// is off in this build. The bridge is the `raw` member of Highway's vector
+// wrapper, which is how Highway reaches the intrinsics itself, and the
+// native width is picked per target so that one SLEEF call covers one whole
+// vector.
 
 // sleef.h guards each instruction set's declarations behind __SSE2__,
 // __AVX__ or __AVX512F__. Highway never defines those: it compiles the whole
@@ -60,6 +62,16 @@ HWY_INLINE hn::Vec512<double> SleefPow(hn::Vec512<double> x, hn::Vec512<double> 
 HWY_INLINE hn::Vec512<float> SleefPow(hn::Vec512<float> x, hn::Vec512<float> y) {
     return hn::Vec512<float>{Sleef_powf16_u10avx512f(x.raw, y.raw)};
 }
+#ifndef __AVX512F__
+extern "C" __m512d Sleef_expd8_u10avx512f(__m512d);
+extern "C" __m512 Sleef_expf16_u10avx512f(__m512);
+#endif
+HWY_INLINE hn::Vec512<double> SleefExp(hn::Vec512<double> x) {
+    return hn::Vec512<double>{Sleef_expd8_u10avx512f(x.raw)};
+}
+HWY_INLINE hn::Vec512<float> SleefExp(hn::Vec512<float> x) {
+    return hn::Vec512<float>{Sleef_expf16_u10avx512f(x.raw)};
+}
 #elif HWY_TARGET == HWY_AVX2
 #define TONEMAP_HAVE_SLEEF 1
 #ifndef __AVX__
@@ -72,6 +84,16 @@ HWY_INLINE hn::Vec256<double> SleefPow(hn::Vec256<double> x, hn::Vec256<double> 
 HWY_INLINE hn::Vec256<float> SleefPow(hn::Vec256<float> x, hn::Vec256<float> y) {
     return hn::Vec256<float>{Sleef_powf8_u10avx2(x.raw, y.raw)};
 }
+#ifndef __AVX__
+extern "C" __m256d Sleef_expd4_u10avx2(__m256d);
+extern "C" __m256 Sleef_expf8_u10avx2(__m256);
+#endif
+HWY_INLINE hn::Vec256<double> SleefExp(hn::Vec256<double> x) {
+    return hn::Vec256<double>{Sleef_expd4_u10avx2(x.raw)};
+}
+HWY_INLINE hn::Vec256<float> SleefExp(hn::Vec256<float> x) {
+    return hn::Vec256<float>{Sleef_expf8_u10avx2(x.raw)};
+}
 #elif HWY_TARGET == HWY_SSE4
 #define TONEMAP_HAVE_SLEEF 1
 HWY_INLINE hn::Vec128<double> SleefPow(hn::Vec128<double> x, hn::Vec128<double> y) {
@@ -79,6 +101,12 @@ HWY_INLINE hn::Vec128<double> SleefPow(hn::Vec128<double> x, hn::Vec128<double> 
 }
 HWY_INLINE hn::Vec128<float> SleefPow(hn::Vec128<float> x, hn::Vec128<float> y) {
     return hn::Vec128<float>{Sleef_powf4_u10sse4(x.raw, y.raw)};
+}
+HWY_INLINE hn::Vec128<double> SleefExp(hn::Vec128<double> x) {
+    return hn::Vec128<double>{Sleef_expd2_u10sse4(x.raw)};
+}
+HWY_INLINE hn::Vec128<float> SleefExp(hn::Vec128<float> x) {
+    return hn::Vec128<float>{Sleef_expf4_u10sse4(x.raw)};
 }
 #elif HWY_TARGET == HWY_SSE2 || HWY_TARGET == HWY_SSSE3
 #define TONEMAP_HAVE_SLEEF 1
@@ -88,10 +116,17 @@ HWY_INLINE hn::Vec128<double> SleefPow(hn::Vec128<double> x, hn::Vec128<double> 
 HWY_INLINE hn::Vec128<float> SleefPow(hn::Vec128<float> x, hn::Vec128<float> y) {
     return hn::Vec128<float>{Sleef_powf4_u10sse2(x.raw, y.raw)};
 }
+HWY_INLINE hn::Vec128<double> SleefExp(hn::Vec128<double> x) {
+    return hn::Vec128<double>{Sleef_expd2_u10sse2(x.raw)};
+}
+HWY_INLINE hn::Vec128<float> SleefExp(hn::Vec128<float> x) {
+    return hn::Vec128<float>{Sleef_expf4_u10sse2(x.raw)};
+}
 #endif
 
 // Every target SLEEF does not cover here, which on this release's only
-// platform means the emulated ones. Correct, not fast.
+// platform means the emulated ones. Correct, not fast. The same applies to
+// ExpPerLane below.
 template <class D, class V>
 HWY_INLINE V PowPerLane(D d, V x, V y) {
     using T = hn::TFromD<D>;
@@ -104,12 +139,31 @@ HWY_INLINE V PowPerLane(D d, V x, V y) {
 }
 
 template <class D, class V>
+HWY_INLINE V ExpPerLane(D d, V x) {
+    using T = hn::TFromD<D>;
+    HWY_ALIGN T bx[HWY_MAX_BYTES / sizeof(T)];
+    hn::Store(x, d, bx);
+    for (size_t i = 0; i < hn::Lanes(d); ++i) bx[i] = std::exp(bx[i]);
+    return hn::Load(d, bx);
+}
+
+template <class D, class V>
 HWY_INLINE V Pow(D d, V x, V y) {
 #ifdef TONEMAP_HAVE_SLEEF
     (void)d;
     return SleefPow(x, y);
 #else
     return PowPerLane(d, x, y);
+#endif
+}
+
+template <class D, class V>
+HWY_INLINE V Exp(D d, V x) {
+#ifdef TONEMAP_HAVE_SLEEF
+    (void)d;
+    return SleefExp(x);
+#else
+    return ExpPerLane(d, x);
 #endif
 }
 
@@ -252,6 +306,67 @@ HWY_INLINE void StoreFloats(D d, V v, float* p, size_t count) {
             hn::StoreN(narrowed, df, p, count);
         }
     }
+}
+
+// --- HLG, BT.2100-3 Table 5 ------------------------------------------------
+
+// Note 5a. The clamp to [0, 1] is the domain HLG defines, and it carries the
+// max(0, .) that Table 5's EOTF applies to the lifted signal.
+template <class D, class V>
+HWY_INLINE V HlgInverseOetf(D d, V ep) {
+    using T = hn::TFromD<D>;
+    ep = hn::Min(hn::Max(ep, hn::Zero(d)), hn::Set(d, T(1)));
+    const V low = hn::Mul(hn::Mul(ep, ep), hn::Set(d, static_cast<T>(1.0 / 3.0)));
+    const V shifted = hn::Mul(hn::Sub(ep, hn::Set(d, static_cast<T>(kHlgC))),
+                              hn::Set(d, static_cast<T>(1.0 / kHlgA)));
+    const V high = hn::Mul(hn::Add(Exp(d, shifted), hn::Set(d, static_cast<T>(kHlgB))),
+                           hn::Set(d, static_cast<T>(1.0 / 12.0)));
+    return hn::IfThenElse(hn::Le(ep, hn::Set(d, T(0.5))), low, high);
+}
+
+template <typename T>
+void HlgDecode(const float* srcR, const float* srcG, const float* srcB, float* dstR,
+               float* dstG, float* dstB, size_t width, const HlgParams& params) {
+    const hn::ScalableTag<T> d;
+    using V = hn::Vec<decltype(d)>;
+    const size_t N = hn::Lanes(d);
+
+    const V beta = hn::Set(d, static_cast<T>(params.beta));
+    const V oneMinusBeta = hn::Set(d, static_cast<T>(1.0 - params.beta));
+    const V exponent = hn::Set(d, static_cast<T>(params.gamma - 1.0));
+    const V scale = hn::Set(d, static_cast<T>(params.lw * params.invNominal));
+    const V zero = hn::Zero(d);
+    const V one = hn::Set(d, T(1));
+
+    for (size_t x = 0; x < width; x += N) {
+        const size_t count = HWY_MIN(N, width - x);
+        const V r = HlgInverseOetf(
+            d, hn::MulAdd(oneMinusBeta, LoadFloats(d, srcR + x, count), beta));
+        const V g = HlgInverseOetf(
+            d, hn::MulAdd(oneMinusBeta, LoadFloats(d, srcG + x, count), beta));
+        const V b = HlgInverseOetf(
+            d, hn::MulAdd(oneMinusBeta, LoadFloats(d, srcB + x, count), beta));
+
+        V ys = hn::Mul(r, hn::Set(d, static_cast<T>(kKr)));
+        ys = hn::MulAdd(g, hn::Set(d, static_cast<T>(kKg)), ys);
+        ys = hn::MulAdd(b, hn::Set(d, static_cast<T>(kKb)), ys);
+
+        // Below a peak of about 301 cd/m2 the exponent is negative, so
+        // ys^exponent at black is infinity and infinity times a channel of
+        // zero is NaN. Substituting 1 keeps the pow defined, and the mask
+        // discards its result for those lanes.
+        const auto positive = hn::Gt(ys, zero);
+        const V k = hn::Mul(Pow(d, hn::IfThenElse(positive, ys, one), exponent), scale);
+
+        StoreFloats(d, hn::IfThenElseZero(positive, hn::Mul(r, k)), dstR + x, count);
+        StoreFloats(d, hn::IfThenElseZero(positive, hn::Mul(g, k)), dstG + x, count);
+        StoreFloats(d, hn::IfThenElseZero(positive, hn::Mul(b, k)), dstB + x, count);
+    }
+}
+
+void HlgRow(const float* srcR, const float* srcG, const float* srcB, float* dstR,
+            float* dstG, float* dstB, size_t width, const HlgParams& params) {
+    HlgDecode<double>(srcR, srcG, srcB, dstR, dstG, dstB, width, params);
 }
 
 template <typename Lane>
@@ -629,6 +744,7 @@ namespace tonemap {
 
 HWY_EXPORT(ToneMapRow);
 HWY_EXPORT(GamutMapRow);
+HWY_EXPORT(HlgRow);
 HWY_EXPORT(TargetName);
 HWY_EXPORT(DoubleLanes);
 
@@ -643,6 +759,12 @@ void gamutMapRowSimd(const float* srcR, const float* srcG, const float* srcB,
                      float* dstR, float* dstG, float* dstB, size_t width,
                      const GamutParams& params) {
     HWY_DYNAMIC_DISPATCH(GamutMapRow)
+    (srcR, srcG, srcB, dstR, dstG, dstB, width, params);
+}
+
+void hlgRowSimd(const float* srcR, const float* srcG, const float* srcB, float* dstR,
+                float* dstG, float* dstB, size_t width, const HlgParams& params) {
+    HWY_DYNAMIC_DISPATCH(HlgRow)
     (srcR, srcG, srcB, dstR, dstG, dstB, width, params);
 }
 
