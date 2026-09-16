@@ -214,10 +214,23 @@ def test_gamut_simd_matches_scalar(plugin, fixtures, target):
 def test_hlg_simd_matches_the_scalar_kernel(plugin, fixtures, target):
     """The scalar kernel is the reference; the vector one must not drift.
 
-    The HLG kernel has no matrix chain, so there is no fused multiply-add
-    contraction to allow for the way ictcp needs one. Both paths run the
-    same operations in the same order on double lanes, so they agree
-    exactly.
+    They are not the same instruction sequence, though. Highway's MulAdd
+    contracts to hardware FMA on AVX2 and above: the built objects carry
+    vfmadd213pd and vfmadd231pd in the vector kernel and none at all in
+    the scalar one. The two paths therefore round differently in float64,
+    and often, measured at roughly 3% of the affine lifts and 15% of the
+    luminance sums over this fixture set.
+
+    Bit-identity survives that only because the arithmetic is float64 and
+    the frame stores float32. One extra or missing rounding moves the
+    result by about 2^-52 relative, some 2^28 times smaller than a float32
+    ULP, so it cannot change the stored value. This is the same mechanism
+    the README describes for ictcp, where a longer matrix chain does make
+    the difference visible at one ULP; here the chain is one FMA in the
+    lift and two in the luminance sum, short enough that it never shows.
+
+    Extending this kernel's arithmetic narrows that margin. If this test
+    ever fails, re-measure rather than loosen it.
     """
     meta, arrays = fixtures
     assert plugin.Info(target=target)["target"] == target
