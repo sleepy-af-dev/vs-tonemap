@@ -51,6 +51,10 @@ exists so the choice of double rests on a measurement.
 - float lanes: 63.20 fps
 - ratio: 1.33x
 
+These figures are from an earlier run and were not re-measured in the sweep
+above, so the double-lanes number will drift slightly from the ictcp SIMD fps
+in the table.
+
 Against the float64 oracle the float kernel reaches 2.5e-04
 absolute and 9.9% relative, against frozen gates of 1.2e-07 for
 both, measured over the tone fixtures against the oracle re-run
