@@ -11,6 +11,8 @@ is what a bug report should quote.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-16
+
 ### Added
 
 - `HLG`, decoding Hybrid Log-Gamma to display-referred linear light through
@@ -43,5 +45,6 @@ is what a bug report should quote.
   targets the build carries and the lane width, and `simd=0` on both filters to
   run the scalar reference.
 
-[Unreleased]: https://github.com/sleepy-af-dev/vs-tonemap/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/sleepy-af-dev/vs-tonemap/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/sleepy-af-dev/vs-tonemap/releases/tag/v0.2.0
 [0.1.0]: https://github.com/sleepy-af-dev/vs-tonemap/releases/tag/v0.1.0

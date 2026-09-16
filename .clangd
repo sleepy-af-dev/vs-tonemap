@@ -1,0 +1,5 @@
+# CMake writes the compile database into the build directory the README
+# configures, so point clangd there rather than keeping a copy at the root that
+# goes stale as soon as a source file is added.
+CompileFlags:
+  CompilationDatabase: build

@@ -8,6 +8,12 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
 endif()
 
+# Emit compile_commands.json so clangd reads the real flags. Without it the
+# editor guesses, and the guess carries neither the SLEEF include directory nor
+# the Highway target defines, so src/simd.cpp reports errors the compiler does
+# not. Regenerated on every configure, which a hand-copied database is not.
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 # The ictcp kernel can be built with float lanes instead of double, to
 # measure what the precision decision costs. It is off in the shipped build
 # and exists only so the decision rests on a number rather than a guess.
