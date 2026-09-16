@@ -410,7 +410,7 @@ orders. No fixture and no real content sits there.
 ## Speed and memory
 
 Measured on a 16-core desktop at 4K, 32 threads. The full chain above from a
-PQ source, including both resize stages, runs at about 34 frames per second.
+PQ source, including both resize stages, runs at about 35 frames per second.
 The same chain from an HLG source, with the extra decode stage, runs at
 about 30 frames per second. The tone mapping filter alone costs 48 ns per
 pixel in `ictcp` and 18 ns per pixel in `yrgb` or `maxrgb`; the gamut filter
@@ -424,7 +424,7 @@ encoder, NVENC or a fast software preset, it becomes the limit.
 
 VapourSynth runs frames in parallel and a 4K RGBS frame is 100 MB, so the
 memory a chain needs scales with the thread count. The PQ chain above peaked
-at 7.3 GB with 32 threads, the HLG chain at 7.4 GB. Lower `core.num_threads`
+at 7.9 GB with 32 threads, the HLG chain at 7.7 GB. Lower `core.num_threads`
 or `core.max_cache_size` to trade throughput for memory.
 
 ## Diagnostics
