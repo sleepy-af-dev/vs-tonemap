@@ -18,14 +18,14 @@ resize stages a real chain carries.
 
 | filter | path | scalar ns/px | SIMD ns/px | scalar fps | SIMD fps | speedup |
 |---|---|---|---|---|---|---|
-| BT2390 | ictcp | 158.6 | 48.2 | 13.93 | 47.56 | 3.29x |
-| BT2390 | ycbcr | 154.9 | 48.1 | 14.88 | 47.89 | 3.22x |
-| BT2390 | yrgb | 74.0 | 18.1 | 34.02 | 74.40 | 4.09x |
-| BT2390 | rgb | 192.9 | 52.0 | 13.18 | 46.51 | 3.71x |
-| BT2390 | maxrgb | 72.3 | 17.9 | 33.92 | 74.23 | 4.03x |
-| BT2407 | clip | 1.0 | 0.8 | 83.96 | 83.86 | 1.34x |
-| BT2407 | softclip | 8.5 | 4.1 | 76.42 | 82.88 | 2.06x |
-| HLG | - | 13.9 | 12.9 | 75.04 | 74.97 | 1.07x |
+| BT2390 | ictcp | 158.5 | 48.0 | 13.94 | 47.59 | 3.30x |
+| BT2390 | ycbcr | 153.1 | 48.3 | 14.88 | 48.23 | 3.17x |
+| BT2390 | yrgb | 73.5 | 18.2 | 33.91 | 73.97 | 4.04x |
+| BT2390 | rgb | 194.4 | 52.4 | 13.13 | 46.15 | 3.71x |
+| BT2390 | maxrgb | 72.9 | 18.1 | 33.96 | 74.80 | 4.04x |
+| BT2407 | clip | 1.0 | 0.7 | 84.83 | 85.02 | 1.47x |
+| BT2407 | softclip | 8.4 | 4.1 | 76.07 | 81.90 | 2.04x |
+| HLG | - | 13.6 | 6.8 | 76.76 | 79.91 | 1.99x |
 
 ## End to end
 
@@ -33,8 +33,8 @@ The whole script of section 4.3 over a synthetic 4K PQ source: the
 resize into linear RGBS, both filters, and the resize back out to
 10-bit YUV. This is what the design's target refers to.
 
-- 34.54 frames per second, ictcp and softclip, on 32 threads
-- Peak working set 7.3 GB, measured in a process
+- 34.38 frames per second, ictcp and softclip, on 32 threads
+- Peak working set 7.4 GB, measured in a process
   that ran nothing but this chain
 
 A 4K RGBS frame is 100 MB and the model is frame-parallel, so the

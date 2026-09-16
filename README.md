@@ -413,7 +413,7 @@ Measured on a 16-core desktop at 4K, 32 threads. The full chain above,
 including both resize stages, runs at about 34 frames per second. The tone
 mapping filter alone costs 48 ns per pixel in `ictcp` and 18 ns per pixel in
 `yrgb` or `maxrgb`; the gamut filter costs 4 ns per pixel. The HLG decode
-costs 13 ns per pixel. `bench/results.md` carries the current numbers and
+costs 7 ns per pixel. `bench/results.md` carries the current numbers and
 the machine they came from.
 
 In an encode the filter is usually not what sets the pace. Piped into x265 at
