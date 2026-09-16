@@ -3,9 +3,9 @@
 A CPU-only VapourSynth plugin that converts PQ or HLG HDR to SDR. Three
 filters:
 
-- `HLG` decodes Hybrid Log-Gamma to display-referred linear light, applying
-  the luminance-driven OOTF of ITU-R BT.2100-3 Table 5 rather than the
-  per-channel approximation a resizer's transfer function gives.
+- `HLG` decodes Hybrid Log-Gamma to display-referred linear light with the
+  luminance-driven OOTF of ITU-R BT.2100-3 Table 5. A resizer's transfer
+  function works one channel at a time and cannot reproduce it.
 - `BT2390` applies the ITU-R BT.2390 tone mapping curve as ITU-R BT.2408
   Annex 5 specifies it, in any of the five colour representations that annex
   describes.
@@ -149,13 +149,22 @@ that needs a value from the properties runs on the first frame, and its
 message names the property the value came from. The split matches what
 `BT2390` uses.
 
-Do not ask `resize` to convert HLG to linear light. zimg applies the
-transfer function to each channel on its own, which is the legacy
-approximation Note 5e of BT.2100-3 describes, not the OOTF of Table 5. The
-two agree on neutral greys and diverge on everything else: a fully
-saturated blue comes out 76% too bright, a fully saturated red 31%. Ask for
-`transfer_s="std-b67"` so the signal arrives unconverted, and let this
-filter do the decode.
+This filter implements the OOTF of BT.2100-3 Table 5: one scalar derived
+from scene luminance, applied to all three channels together, which is what
+holds chromaticity steady as luminance changes. It is checked against a
+float64 implementation of the same equations to the bounds in Accuracy
+below.
+
+A resizer cannot do that, because a transfer function works on one channel
+at a time. zimg's `std-b67` raises each channel separately, which Note 5e of
+BT.2100-3 calls the approximation some legacy displays use. Measured against
+Table 5, the two agree on neutral greys and separate as colour saturates:
+zimg's result is 76% too bright on a fully saturated blue and 31% too bright
+on a fully saturated red.
+
+So do not ask `resize` to convert HLG to linear light. Ask for
+`transfer_s="std-b67"`, which leaves the signal unconverted, and let this
+filter decode it.
 
 ### Output
 

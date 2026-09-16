@@ -18,10 +18,11 @@ is what a bug report should quote.
   into the existing `BT2390` and `BT2407` stages. `lw` and `lb` come from
   `MasteringDisplayMaxLuminance` and `MasteringDisplayMinLuminance` when not
   given as arguments, defaulting to 1000 and 0 cd/m2 since most HLG content
-  carries no mastering metadata. Feed it the HLG signal itself: asking
-  `resize` for `transfer_s="linear"` first applies the per-channel
-  approximation of BT.2100-3 Note 5e instead of this OOTF, which agrees on
-  grey but comes out up to 76% too bright on saturated colour.
+  carries no mastering metadata. Feed it the HLG signal rather than linear
+  light: the OOTF needs all three channels at once, so a resizer's transfer
+  function cannot apply it. Asking `resize` for `transfer_s="linear"`
+  substitutes the per-channel approximation of Note 5e, which measures 76%
+  too bright on a fully saturated blue against Table 5.
 
 ## [0.1.0] - 2026-09-13
 
