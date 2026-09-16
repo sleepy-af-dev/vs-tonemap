@@ -84,6 +84,8 @@ sig = core.resize.Bicubic(src, format=vs.RGBS,
 lin = core.tonemap.HLG(sig, nominal_luminance=100)
 sdr = core.tonemap.BT2390(lin, nominal_luminance=100)
 sdr = core.tonemap.BT2407(sdr)
+out = core.resize.Bicubic(sdr, format=vs.YUV420P10, matrix_s="709",
+                          transfer_s="709", primaries_s="709")
 ```
 
 ### Units
