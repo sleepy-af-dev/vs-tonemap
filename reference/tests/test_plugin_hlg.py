@@ -129,16 +129,71 @@ def test_bad_arguments_fail_at_create_time(plugin, kwargs, fragment):
     assert fragment in str(excinfo.value)
 
 
-def test_matches_the_oracle_on_a_dense_ramp(plugin):
+@pytest.mark.parametrize(
+    "lw,lb",
+    [
+        (1000.0, 0.0),  # the reference display BT.2100 is written around
+        (1000.0, 0.005),  # a realistic display black, so beta is non-zero
+        # A black high enough to separate alpha = L_W from alpha = L_W - L_B.
+        # At lb 0.005 that mistake shows up as only 5e-6 relative, which is
+        # close enough to the gate to be luck; at 0.5 it is 5e-4.
+        (1000.0, 0.5),
+        (4000.0, 0.0),  # outside [400, 2000], so the extended gamma applies
+        (200.0, 0.0),  # gamma below 1, where the black guard bites
+    ],
+)
+def test_matches_the_oracle_on_a_dense_ramp(plugin, lw, lb):
     signal = np.linspace(0.0, 1.0, 4096)
     rows = grey(signal)
     got, _ = run(
-        plugin.HLG(make_clip(rows, HLG_BT2020), lw=1000.0, nominal_luminance=100.0,
-                   simd=0)
+        plugin.HLG(
+            make_clip(rows, HLG_BT2020),
+            lw=lw, lb=lb, nominal_luminance=100.0, simd=0,
+        )
     )
-    expected = hlg(rows.astype(np.float32).astype(np.float64), lw=1000.0,
-                   nominal_luminance=100.0)
+    expected = hlg(
+        rows.astype(np.float32).astype(np.float64),
+        lw=lw, lb=lb, nominal_luminance=100.0,
+    )
     error = np.abs(got - expected)
-    relative = np.where(np.abs(expected) > 1e-3, error / np.maximum(np.abs(expected), 1e-12), 0.0)
+    relative = np.where(
+        np.abs(expected) > 1e-3, error / np.maximum(np.abs(expected), 1e-12), 0.0
+    )
     assert error[np.abs(expected) <= 1.0].max() <= 1.2e-7
     assert relative.max() <= 1.2e-7
+
+
+@pytest.mark.parametrize(
+    "lw,lb", [(1000.0, 0.005), (1000.0, 0.5), (400.0, 0.01)]
+)
+def test_zero_signal_gives_exactly_the_display_black(plugin, lw, lb):
+    """Table 5 builds beta so that a signal of 0 displays exactly L_B.
+
+    This is the assertion that separates alpha = L_W, which is what Table 5
+    says, from alpha = L_W - L_B, which is the plausible misreading. The
+    wrong one gives lb - lb**2/lw instead.
+    """
+    got, _ = run(
+        plugin.HLG(
+            make_clip(grey([0.0, 0.0]), HLG_BT2020),
+            lw=lw, lb=lb, nominal_luminance=1.0, simd=0,
+        )
+    )
+    assert float(got[0, 0]) == pytest.approx(lb, rel=1e-6)
+
+
+def test_the_extended_gamma_formula_is_used_outside_the_production_range(plugin):
+    """A peak of 4000 is outside Note 5f's 400 to 2000 range.
+
+    So the extended kappa formula applies, giving gamma 1.481185 and putting
+    75% signal on 559.36 cd/m2. Had the simple formula been used instead,
+    gamma would be 1.452865 and the answer 580.80, a 3.8% difference. This
+    pins which branch runs rather than merely touching it.
+    """
+    got, _ = run(
+        plugin.HLG(
+            make_clip(grey([0.75]), HLG_BT2020),
+            lw=4000.0, nominal_luminance=1.0, simd=0,
+        )
+    )
+    assert float(got[0, 0]) == pytest.approx(559.3574, rel=1e-5)

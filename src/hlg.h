@@ -17,7 +17,11 @@
 #include <cstddef>
 #include <string>
 
-#include "colour.h"
+// colour.h is deliberately NOT included here. Nothing this header declares
+// uses it: the params are plain doubles and the row kernel takes floats.
+// hlg.cpp includes it directly for checkLuminance and the kKr/kKg/kKb
+// coefficients. That differs from bt2390.h, whose colour.h include is
+// earned, since FrameParams holds an Eetf.
 
 namespace tonemap {
 

@@ -2,6 +2,8 @@
 
 #include <cmath>
 
+#include "colour.h"  // checkLuminance, and kKr/kKg/kKb for the OOTF luminance
+
 namespace tonemap {
 
 double hlgSystemGamma(double lw) {
