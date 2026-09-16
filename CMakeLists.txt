@@ -15,7 +15,10 @@ option(TONEMAP_FLOAT32_ICTCP "build the ictcp kernel with float lanes" OFF)
 
 # The option was TONEMAPPER_FLOAT32_ICTCP before the project was renamed. A
 # build directory whose cache still holds the old name silently builds double
-# lanes while claiming float, so refuse rather than ignore it.
+# lanes while claiming float, so refuse rather than ignore it. Only a build
+# directory that predates the rename can trip this; a fresh clone never
+# defines the old name, so the guard is here purely for whoever still has one
+# of those directories around and can go once that stops being a concern.
 if(DEFINED TONEMAPPER_FLOAT32_ICTCP)
   message(FATAL_ERROR
     "TONEMAPPER_FLOAT32_ICTCP is the pre-rename name and is not read. "
@@ -50,8 +53,8 @@ FetchContent_Declare(highway
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(highway)
 
-# SLEEF: vector math. Only its pow is used, from the static library, whose
-# per-instruction-set objects carry their own compiler flags. src/simd.cpp
+# SLEEF: vector math. Only its pow and exp are used, from the static library,
+# whose per-instruction-set objects carry their own compiler flags. src/simd.cpp
 # declares the entry points it needs, because the header hides them behind
 # macros Highway never sets. Nothing else SLEEF builds is wanted.
 set(SLEEF_BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)

@@ -27,14 +27,18 @@ namespace tonemap {
 namespace HWY_NAMESPACE {
 namespace hn = hwy::HWY_NAMESPACE;
 
-// --- pow ------------------------------------------------------------------
+// --- pow, exp --------------------------------------------------------------
 //
 // SLEEF's u10 variants, documented to 1.0 ULP. Highway has no Pow, and
 // composing Exp(y * Log(x)) would put the error of two 1 to 4 ULP functions
-// through an outer exponent of 78.84 (section 3.1). The bridge is the `raw`
-// member of Highway's vector wrapper, which is how Highway reaches the
-// intrinsics itself, and the native width is picked per target so that one
-// SLEEF call covers one whole vector.
+// through an outer exponent of 78.84 (section 3.1). Highway does have its own
+// Exp, in contrib/math, but SLEEF's u10 exp is documented to 1 ULP where
+// Highway's contrib Exp is 1 to 4, and contrib is off in this build (see
+// HWY_ENABLE_CONTRIB in CMakeLists.txt), so it is not a drop-in replacement
+// for either function here. The bridge is the `raw` member of Highway's
+// vector wrapper, which is how Highway reaches the intrinsics itself, and the
+// native width is picked per target so that one SLEEF call covers one whole
+// vector.
 
 // sleef.h guards each instruction set's declarations behind __SSE2__,
 // __AVX__ or __AVX512F__. Highway never defines those: it compiles the whole
@@ -123,7 +127,8 @@ HWY_INLINE hn::Vec128<float> SleefExp(hn::Vec128<float> x) {
 #endif
 
 // Every target SLEEF does not cover here, which on this release's only
-// platform means the emulated ones. Correct, not fast.
+// platform means the emulated ones. Correct, not fast. The same applies to
+// ExpPerLane below.
 template <class D, class V>
 HWY_INLINE V PowPerLane(D d, V x, V y) {
     using T = hn::TFromD<D>;
@@ -135,8 +140,6 @@ HWY_INLINE V PowPerLane(D d, V x, V y) {
     return hn::Load(d, bx);
 }
 
-// Every target SLEEF does not cover here, which on this release's only
-// platform means the emulated ones. Correct, not fast.
 template <class D, class V>
 HWY_INLINE V ExpPerLane(D d, V x) {
     using T = hn::TFromD<D>;
