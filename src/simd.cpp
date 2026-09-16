@@ -31,12 +31,10 @@ namespace hn = hwy::HWY_NAMESPACE;
 //
 // SLEEF's u10 variants, documented to 1.0 ULP. Highway has no Pow, and
 // composing Exp(y * Log(x)) would put the error of two 1 to 4 ULP functions
-// through an outer exponent of 78.84 (section 3.1). Highway does have its own
-// Exp, in contrib/math, but SLEEF's u10 exp is documented to 1 ULP where
-// Highway's contrib Exp is 1 to 4, and contrib is off in this build (see
-// HWY_ENABLE_CONTRIB in CMakeLists.txt), so it is not a drop-in replacement
-// for either function here. The bridge is the `raw` member of Highway's
-// vector wrapper, which is how Highway reaches the intrinsics itself, and the
+// through an outer exponent of 78.84 (section 3.1); SLEEF's u10 exp is
+// documented to 1 ULP where Highway's own contrib Exp is 1 to 4, and contrib
+// is off in this build. The bridge is the `raw` member of Highway's vector
+// wrapper, which is how Highway reaches the intrinsics itself, and the
 // native width is picked per target so that one SLEEF call covers one whole
 // vector.
 
