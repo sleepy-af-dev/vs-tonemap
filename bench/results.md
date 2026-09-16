@@ -7,6 +7,9 @@ thread and are the kernel; frames per second are measured on every
 thread and are what a script sees. Neither figure includes the two
 resize stages a real chain carries.
 
+Written by `bench/benchmark.py --sweep --write`; hand edits here do not
+survive the next run.
+
 ## Machine
 
 - CPU: AMD Ryzen 9 9950X3D, 32 logical cores
@@ -47,13 +50,13 @@ The ictcp kernel built a second time with float lanes and SLEEF's
 float pow, everything else unchanged. It is not a shipped path and
 exists so the choice of double rests on a measurement.
 
-- double lanes: 47.56 fps
+- double lanes: 47.59 fps
 - float lanes: 63.20 fps
 - ratio: 1.33x
 
-These figures are from an earlier run and were not re-measured in the sweep
-above, so the double-lanes number will drift slightly from the ictcp SIMD fps
-in the table.
+The double-lane figure is this sweep's own ictcp row; the float-lane
+figure is from a separate --dll run of the float32 build, so the two
+numbers are never from the same invocation of the process.
 
 Against the float64 oracle the float kernel reaches 2.5e-04
 absolute and 9.9% relative, against frozen gates of 1.2e-07 for
