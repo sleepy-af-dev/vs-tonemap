@@ -28,9 +28,10 @@ def grey(signal):
     return np.repeat(np.atleast_1d(np.asarray(signal, dtype=np.float64))[:, None], 3, 1)
 
 
-# simd=0 throughout this module: the scalar kernel is the reference, and it
-# is the only one that exists until the SIMD task lands. Task 7 adds the
-# parametrisation over both paths once there are two.
+# simd=0 throughout this module: the scalar kernel is the reference, tested
+# here against the published numbers and the float64 oracle. The vector
+# kernel is covered by being bit-identical to it (test_plugin_simd.py), except
+# for the accuracy gate below, which both paths must clear.
 
 
 @pytest.mark.parametrize("lw,expected", sorted(REFERENCE_WHITE.items()))
@@ -215,8 +216,8 @@ def test_the_extended_gamma_formula_is_used_outside_the_production_range(plugin)
 from vsharness import GATES, error_stats, report_errors, ulp_columns  # noqa: E402
 
 
-def test_every_case_meets_the_accuracy_gate(plugin, fixtures, record_property):
-    simd = 0  # Task 7 turns this into a parametrisation over both paths
+@pytest.mark.parametrize("simd", [0, 1])
+def test_every_case_meets_the_accuracy_gate(plugin, fixtures, simd, record_property):
     meta, arrays = fixtures
     report = []
     ulps = []

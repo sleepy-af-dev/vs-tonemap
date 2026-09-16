@@ -71,6 +71,11 @@ def available_targets():
 
 TARGETS = available_targets()
 
+# What an HLG clip carries once resize has done the matrix and range
+# conversion but left the transfer alone. 18 is ARIB STD-B67. Defined locally
+# rather than imported from test_plugin_hlg, which is the module that owns it.
+HLG_BT2020 = {"_Transfer": 18, "_Primaries": 9, "_Range": 1}
+
 
 @contextmanager
 def forced(plugin, name):
@@ -204,6 +209,27 @@ def test_gamut_simd_matches_scalar(plugin, fixtures, target):
         f"\n{target:<10}{'gamut':<8} simd vs scalar: max abs {worst[0]:.3e}, "
         f"max rel {worst[1]:.3e}, max {worst[2]} float32 ULP"
     )
+
+
+def test_hlg_simd_matches_the_scalar_kernel(plugin, fixtures, target):
+    """The scalar kernel is the reference; the vector one must not drift.
+
+    The HLG kernel has no matrix chain, so there is no fused multiply-add
+    contraction to allow for the way ictcp needs one. Both paths run the
+    same operations in the same order on double lanes, so they agree
+    exactly.
+    """
+    meta, arrays = fixtures
+    assert plugin.Info(target=target)["target"] == target
+    try:
+        for name, params in meta["hlg"].items():
+            rows = arrays[f"hlg/{name}/in"]
+            clip = make_clip(rows, HLG_BT2020)
+            vector, _ = run(plugin.HLG(clip, simd=1, **params))
+            scalar, _ = run(plugin.HLG(clip, simd=0, **params))
+            assert np.array_equal(vector, scalar), f"{target} {name}"
+    finally:
+        plugin.Info(target="")
 
 
 def test_the_tail_of_a_row_is_handled(plugin, fixtures):

@@ -254,6 +254,76 @@ HWY_INLINE void StoreFloats(D d, V v, float* p, size_t count) {
     }
 }
 
+// --- HLG, BT.2100-3 Table 5 ------------------------------------------------
+
+// exp as pow(e, x). SLEEF's exp entry points would need the same per-target
+// declaration block pow already has, for one call site.
+// ponytail: exp via pow; declare Sleef_expd*_u10 if this ever measures hot.
+template <class D, class V>
+HWY_INLINE V Exp(D d, V x) {
+    using T = hn::TFromD<D>;
+    return Pow(d, hn::Set(d, static_cast<T>(2.718281828459045235360287)), x);
+}
+
+// Note 5a. The clamp to [0, 1] is the domain HLG defines, and it carries the
+// max(0, .) that Table 5's EOTF applies to the lifted signal.
+template <class D, class V>
+HWY_INLINE V HlgInverseOetf(D d, V ep) {
+    using T = hn::TFromD<D>;
+    ep = hn::Min(hn::Max(ep, hn::Zero(d)), hn::Set(d, T(1)));
+    const V low = hn::Mul(hn::Mul(ep, ep), hn::Set(d, static_cast<T>(1.0 / 3.0)));
+    const V shifted = hn::Mul(hn::Sub(ep, hn::Set(d, static_cast<T>(kHlgC))),
+                              hn::Set(d, static_cast<T>(1.0 / kHlgA)));
+    const V high = hn::Mul(hn::Add(Exp(d, shifted), hn::Set(d, static_cast<T>(kHlgB))),
+                           hn::Set(d, static_cast<T>(1.0 / 12.0)));
+    return hn::IfThenElse(hn::Le(ep, hn::Set(d, T(0.5))), low, high);
+}
+
+template <typename T>
+void HlgDecode(const float* srcR, const float* srcG, const float* srcB, float* dstR,
+               float* dstG, float* dstB, size_t width, const HlgParams& params) {
+    const hn::ScalableTag<T> d;
+    using V = hn::Vec<decltype(d)>;
+    const size_t N = hn::Lanes(d);
+
+    const V beta = hn::Set(d, static_cast<T>(params.beta));
+    const V oneMinusBeta = hn::Set(d, static_cast<T>(1.0 - params.beta));
+    const V exponent = hn::Set(d, static_cast<T>(params.gamma - 1.0));
+    const V scale = hn::Set(d, static_cast<T>(params.lw * params.invNominal));
+    const V zero = hn::Zero(d);
+    const V one = hn::Set(d, T(1));
+
+    for (size_t x = 0; x < width; x += N) {
+        const size_t count = HWY_MIN(N, width - x);
+        const V r = HlgInverseOetf(
+            d, hn::MulAdd(oneMinusBeta, LoadFloats(d, srcR + x, count), beta));
+        const V g = HlgInverseOetf(
+            d, hn::MulAdd(oneMinusBeta, LoadFloats(d, srcG + x, count), beta));
+        const V b = HlgInverseOetf(
+            d, hn::MulAdd(oneMinusBeta, LoadFloats(d, srcB + x, count), beta));
+
+        V ys = hn::Mul(r, hn::Set(d, static_cast<T>(kKr)));
+        ys = hn::MulAdd(g, hn::Set(d, static_cast<T>(kKg)), ys);
+        ys = hn::MulAdd(b, hn::Set(d, static_cast<T>(kKb)), ys);
+
+        // Below a peak of about 301 cd/m2 the exponent is negative, so
+        // ys^exponent at black is infinity and infinity times a channel of
+        // zero is NaN. Substituting 1 keeps the pow defined, and the mask
+        // discards its result for those lanes.
+        const auto positive = hn::Gt(ys, zero);
+        const V k = hn::Mul(Pow(d, hn::IfThenElse(positive, ys, one), exponent), scale);
+
+        StoreFloats(d, hn::IfThenElseZero(positive, hn::Mul(r, k)), dstR + x, count);
+        StoreFloats(d, hn::IfThenElseZero(positive, hn::Mul(g, k)), dstG + x, count);
+        StoreFloats(d, hn::IfThenElseZero(positive, hn::Mul(b, k)), dstB + x, count);
+    }
+}
+
+void HlgRow(const float* srcR, const float* srcG, const float* srcB, float* dstR,
+            float* dstG, float* dstB, size_t width, const HlgParams& params) {
+    HlgDecode<double>(srcR, srcG, srcB, dstR, dstG, dstB, width, params);
+}
+
 template <typename Lane>
 void ToneMapIctcp(const float* srcR, const float* srcG, const float* srcB, float* dstR,
                   float* dstG, float* dstB, size_t width, const FrameParams& params) {
@@ -629,6 +699,7 @@ namespace tonemap {
 
 HWY_EXPORT(ToneMapRow);
 HWY_EXPORT(GamutMapRow);
+HWY_EXPORT(HlgRow);
 HWY_EXPORT(TargetName);
 HWY_EXPORT(DoubleLanes);
 
@@ -643,6 +714,12 @@ void gamutMapRowSimd(const float* srcR, const float* srcG, const float* srcB,
                      float* dstR, float* dstG, float* dstB, size_t width,
                      const GamutParams& params) {
     HWY_DYNAMIC_DISPATCH(GamutMapRow)
+    (srcR, srcG, srcB, dstR, dstG, dstB, width, params);
+}
+
+void hlgRowSimd(const float* srcR, const float* srcG, const float* srcB, float* dstR,
+                float* dstG, float* dstB, size_t width, const HlgParams& params) {
+    HWY_DYNAMIC_DISPATCH(HlgRow)
     (srcR, srcG, srcB, dstR, dstG, dstB, width, params);
 }
 

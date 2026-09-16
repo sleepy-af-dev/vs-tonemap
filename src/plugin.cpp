@@ -330,8 +330,9 @@ const VSFrame* VS_CC hlgGetFrame(int n, int activationReason, void* instanceData
             dstPlane[p] =
                 reinterpret_cast<float*>(vsapi->getWritePtr(dst, p)) + y * dstStride;
         }
-        tonemap::hlgRow(srcPlane[0], srcPlane[1], srcPlane[2], dstPlane[0], dstPlane[1],
-                        dstPlane[2], static_cast<size_t>(width), params);
+        const auto row = d->simd ? tonemap::hlgRowSimd : tonemap::hlgRow;
+        row(srcPlane[0], srcPlane[1], srcPlane[2], dstPlane[0], dstPlane[1], dstPlane[2],
+            static_cast<size_t>(width), params);
     }
 
     VSMap* outProps = vsapi->getFramePropertiesRW(dst);
