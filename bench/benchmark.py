@@ -15,11 +15,17 @@ thread, which is what a script would see.
 This measures the filters alone. The end-to-end figure the design targets
 also carries two resize stages.
 
-Two things this script learned the hard way. Nodes have to be rebuilt for
+Three things this script learned the hard way. Nodes have to be rebuilt for
 every pass, because VapourSynth caches frames per node and draining the same
 node twice measures the cache; that first reported a 4K filter at 3675 fps.
 And a run needs at least as many frames as threads, because the model is
-frame-parallel and a short run cannot occupy the machine.
+frame-parallel and a short run cannot occupy the machine. And the chain
+figures measured right after a --sweep can read low, because the sweep's own
+workload leaves the machine in a state the next measurement inherits; the
+script now pauses before each chain measurement to let it settle. A PQ
+figure reading below the HLG figure is the sign it didn't: the HLG chain
+runs the same two filters plus a decode stage, so it always does more work
+and cannot read faster.
 """
 
 import argparse
@@ -255,6 +261,16 @@ def end_to_end(core, frames, threads, hlg=False):
     return frames / seconds
 
 
+# A --sweep run measured PQ at 27.67 fps and HLG at 29.30 fps immediately
+# afterward, against isolated-run ranges of 34.2-34.7 and 29.7-30.6 for the
+# two chains; HLG reading faster than PQ is impossible, since the HLG chain
+# does strictly more work. A 45-second pause before the chain measurement
+# restored both figures to their isolated ranges in that same testing. That
+# is one observation, not a derived constant, so treat 45 as a heuristic and
+# revisit it if it stops working.
+CHAIN_SETTLE_SECONDS = 45
+
+
 def chain_in_fresh_process(frames, dll=None, hlg=False):
     """The end-to-end pass on its own, so the peak working set is the chain's.
 
@@ -262,6 +278,7 @@ def chain_in_fresh_process(frames, dll=None, hlg=False):
     sweep that has already built 4K arrays and run every path would report its
     own peak rather than the chain's.
     """
+    time.sleep(CHAIN_SETTLE_SECONDS)
     command = [sys.executable, __file__, "--chain", "--frames", str(frames)]
     if hlg:
         command += ["--hlg"]
