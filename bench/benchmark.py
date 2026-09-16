@@ -66,7 +66,7 @@ def synthetic_frame(seed=20260912):
     return frame
 
 
-def synthetic_clip(core, length, frame):
+def synthetic_clip(core, length, frame, transfer=8):
     blank = core.std.BlankClip(
         format=vs.RGBS, width=WIDTH, height=HEIGHT, length=length, keep=True
     )
@@ -78,7 +78,7 @@ def synthetic_clip(core, length, frame):
         return out
 
     clip = core.std.ModifyFrame(blank, blank, fill)
-    return core.std.SetFrameProps(clip, _Transfer=8, _Primaries=9, _Range=1)
+    return core.std.SetFrameProps(clip, _Transfer=transfer, _Primaries=9, _Range=1)
 
 
 def drain(clip, prefetch):
@@ -90,8 +90,13 @@ def drain(clip, prefetch):
 
 def build_chain(core, frames, frame, stage, simd):
     """Freshly built nodes: source alone, or source with one filter on it."""
-    clip = synthetic_clip(core, frames, frame)
     kind, name = stage
+    if kind == "hlg":
+        # HLG signal in [0, 1], not linear light, so the ramp is scaled down
+        # rather than left at its BT2390 range of ten times SDR white.
+        clip = synthetic_clip(core, frames, frame * 0.1, transfer=18)
+        return core.tonemap.HLG(clip, simd=simd)
+    clip = synthetic_clip(core, frames, frame)
     if kind == "source":
         return clip
     if kind == "tone":
@@ -247,13 +252,20 @@ def environment(core):
     }
 
 
+FILTER_NAMES = {"tone": "BT2390", "gamut": "BT2407", "hlg": "HLG"}
+
+
 def sweep(core, frame, frames_one, frames_many, threads):
     rows = []
-    stages = [("tone", r) for r in REPRESENTATIONS] + [("gamut", m) for m in METHODS]
+    stages = (
+        [("tone", r) for r in REPRESENTATIONS]
+        + [("gamut", m) for m in METHODS]
+        + [("hlg", None)]
+    )
     for stage in stages:
         entry: dict[str, Any] = {
-            "filter": "BT2390" if stage[0] == "tone" else "BT2407",
-            "path": stage[1],
+            "filter": FILTER_NAMES[stage[0]],
+            "path": stage[1] if stage[1] is not None else "-",
         }
         for simd in (0, 1):
             one = run_case(core, stage, frame, frames_one, 1, simd)

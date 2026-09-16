@@ -1,7 +1,11 @@
 # vs-tonemap
 
-A CPU-only VapourSynth plugin that converts PQ HDR to SDR. Two filters:
+A CPU-only VapourSynth plugin that converts PQ or HLG HDR to SDR. Three
+filters:
 
+- `HLG` decodes Hybrid Log-Gamma to display-referred linear light, applying
+  the luminance-driven OOTF of ITU-R BT.2100-3 Table 5 rather than the
+  per-channel approximation a resizer's transfer function gives.
 - `BT2390` applies the ITU-R BT.2390 tone mapping curve as ITU-R BT.2408
   Annex 5 specifies it, in any of the five colour representations that annex
   describes.
@@ -48,11 +52,13 @@ It registers the namespace `tonemap` and the identifier
 
 ## Usage
 
-Both filters take linear-light RGBS, that is 32-bit float RGB with a constant
-format and constant dimensions. `BT2390` expects BT.2020 primaries and
-produces BT.2020; `BT2407` expects the output of `BT2390` and produces
-BT.709. A full chain converts into linear RGBS, tone maps, gamut maps, and
-converts back out:
+All three filters take RGBS, that is 32-bit float RGB with a constant format
+and constant dimensions. `BT2390` and `BT2407` take linear light in BT.2020
+primaries; `HLG` takes the HLG signal itself, also in BT.2020 primaries, and
+produces the linear light the other two expect. `BT2390` produces BT.2020;
+`BT2407` expects the output of `BT2390` and produces BT.709. A full chain
+for PQ input converts into linear RGBS, tone maps, gamut maps, and converts
+back out:
 
 ```python
 lin = core.resize.Bicubic(src, format=vs.RGBS,
@@ -67,6 +73,18 @@ out = core.resize.Bicubic(sdr, format=vs.YUV420P10, matrix_s="709",
 
 The source filter has to attach the standard mastering display properties for
 the defaults to work; BestSource, L-SMASH-Works and ffms2 all do.
+
+HLG input needs one extra stage first, decoding the signal to linear light
+before the same two filters run:
+
+```python
+sig = core.resize.Bicubic(src, format=vs.RGBS,
+                          transfer_in_s="std-b67", transfer_s="std-b67",
+                          primaries_in_s="2020", primaries_s="2020")
+lin = core.tonemap.HLG(sig, nominal_luminance=100)
+sdr = core.tonemap.BT2390(lin, nominal_luminance=100)
+sdr = core.tonemap.BT2407(sdr)
+```
 
 ### Units
 
@@ -85,10 +103,62 @@ The mastering metadata is read as either a float or an integer, since a
 hand-written `SetFrameProps` call turns a whole number into an integer
 property.
 
-`_Transfer` must be 8 (linear) and `_Primaries` 9 (BT.2020). For range, cores
-from R74 on carry `_Range`, which must be 1 (full); older cores carry
-`_ColorRange`, which must be 0, the convention of the day. Both spellings are
-read, so range validation works on every supported core.
+`_Transfer` must be 8 (linear) for `BT2390` and `BT2407`, and 18 (ARIB
+STD-B67) for `HLG`. `_Primaries` must be 9 (BT.2020) for all three. For
+range, cores from R74 on carry `_Range`, which must be 1 (full); older cores
+carry `_ColorRange`, which must be 0, the convention of the day. Both
+spellings are read, so range validation works on every supported core.
+
+## tonemap.HLG
+
+```
+HLG(clip clip, [float lw, float lb, float nominal_luminance=100.0,
+    int simd=1])
+```
+
+| parameter | default | meaning |
+|---|---|---|
+| `lw` | `MasteringDisplayMaxLuminance`, else 1000 | nominal display peak, LW |
+| `lb` | `MasteringDisplayMinLuminance`, else 0 | display black, LB |
+| `nominal_luminance` | 100 | cd/m2 that 1.0 means on the output |
+| `simd` | 1 | 0 runs the scalar reference instead |
+
+`lw` and `lb` are read from the frame properties when they are not given, the
+same as `src_min` and `src_max` on `BT2390`. Unlike those, they default
+rather than error when neither the argument nor a usable property is there:
+HLG is display-independent by design and most HLG content carries no
+mastering metadata at all. 1000 cd/m2, the reference display both BT.2100
+and BT.2408 are written around, is the default `lw`; 0 is the default `lb`.
+
+It is an error if `lw` is not a positive, finite luminance, or if `lb` is
+negative, non-finite, or at or above `lw`. Every check whose inputs are all
+arguments runs when the filter is created, so a bad parameter fails at
+script evaluation; a check that needs a value from the properties runs on
+the first frame, and its message names the property the value came from.
+The split matches what `BT2390` uses.
+
+Do not ask `resize` to convert HLG to linear light. zimg applies the
+transfer function to each channel on its own, which is the legacy
+approximation Note 5e of BT.2100-3 describes, not the OOTF of Table 5. The
+two agree on neutral greys and diverge on everything else: a fully
+saturated blue comes out 76% too bright, a fully saturated red 31%. Ask for
+`transfer_s="std-b67"` so the signal arrives unconverted, and let this
+filter do the decode.
+
+### Output
+
+Linear BT.2020 RGBS, scaled so 1.0 means `nominal_luminance` cd/m2. Channels
+can exceed 1.0 whenever `lw` is above `nominal_luminance`, which is the
+normal case: a 1000 cd/m2 peak at the default nominal of 100 reaches 10.0.
+`_Transfer` becomes 8, `_Primaries` stays 9, and `_Range` is written as 1 on
+the same terms as the other two filters.
+
+`MasteringDisplayMaxLuminance` and `MasteringDisplayMinLuminance` are
+written as `lw` and `lb`, whichever way they were sourced, so the frame
+describes the display it now renders for. That is also what lets
+`BT2390(HLG(clip))` run with no arguments of its own. `ContentLightLevelMax`
+and the other content-describing properties are left alone; `BT2390` is
+what removes them.
 
 ## tonemap.BT2390
 
@@ -255,7 +325,13 @@ listed so that nothing here is a surprise.
   negative linear light is possible and is not implemented.
 - NaN and infinite samples are not supported input. The output for such a
   pixel is unspecified and neither the filter nor the reference checks for
-  them, because a check per sample would cost every valid pixel.
+  them, because a check per sample would cost every valid pixel. On a NaN
+  sample the scalar and vector kernels of `HLG` disagree: the scalar clamp
+  is a pair of comparisons, both false for NaN, so the NaN passes through,
+  while the vector clamp is `Min`/`Max`, which on x86 return the second
+  operand for a NaN input and so yield 0. Both stay within "unspecified" as
+  stated above; it is written down because "the two paths are bit-identical"
+  is otherwise true everywhere else.
 - With `dst_min` above `src_min` the black lift of step 4 raises the whole
   curve, including its top. The output then exceeds `dst_max` by a factor of
   b(1 - maxLum)^4, for instance 0.39% for a 1000 cd/m2 master, a 1 cd/m2
@@ -274,6 +350,20 @@ listed so that nothing here is a surprise.
   produces luminance above 1.
 - A chromaticity beyond the effective source gamut lands on the BT.709
   boundary. The report does not contemplate that input.
+- In `HLG`, an input signal outside [0, 1] is clamped to it. HLG is defined
+  on that domain only; values outside it arrive from chroma upsampling
+  ringing and from limited-range codes below 64 or above 940.
+- In `HLG`, a pixel whose driving luminance YS is zero or negative comes out
+  black on all three channels instead of going through the OOTF. Below an
+  `lw` of about 301 cd/m2 the system gamma falls under 1, so the OOTF's
+  exponent, gamma minus 1, is negative, and YS to that power at exact black
+  is infinity; multiplied by a channel of zero, that is NaN. The clamp above
+  keeps YS non-negative, so this guard only ever fires at exact black.
+- The system gamma is not monotone in `lw`. Note 5f switches formula at 400
+  cd/m2, and the two disagree there by 0.011, so an `lw` of 399 gets a
+  system gamma of 1.044 while 400 gets 1.033. The step at 2000 cd/m2 goes
+  the other way, up by 0.007. Both are the recommendation's own artefacts,
+  and neither is smoothed over.
 
 ## Accuracy
 
@@ -304,8 +394,9 @@ orders. No fixture and no real content sits there.
 Measured on a 16-core desktop at 4K, 32 threads. The full chain above,
 including both resize stages, runs at about 34 frames per second. The tone
 mapping filter alone costs 48 ns per pixel in `ictcp` and 18 ns per pixel in
-`yrgb` or `maxrgb`; the gamut filter costs 4 ns per pixel. `bench/results.md`
-carries the current numbers and the machine they came from.
+`yrgb` or `maxrgb`; the gamut filter costs 4 ns per pixel. The HLG decode
+costs 13 ns per pixel. `bench/results.md` carries the current numbers and
+the machine they came from.
 
 In an encode the filter is usually not what sets the pace. Piped into x265 at
 `medium` and CRF 18, the whole chain ran at 14.8 frames per second, so the
@@ -319,11 +410,11 @@ trade throughput for memory.
 
 ## Diagnostics
 
-`simd=0` on either filter runs the scalar reference path instead of the vector
-kernel. It exists so the test suite can compare the two, and as a way out if a
-machine ever disagrees with its own vector unit. It is not a tuning knob: the
-scalar path computes values within one float32 ULP of the vector path and is
-up to five times slower.
+`simd=0` on any of the three filters runs the scalar reference path instead
+of the vector kernel. It exists so the test suite can compare the two, and
+as a way out if a machine ever disagrees with its own vector unit. It is not
+a tuning knob: the scalar path computes values within one float32 ULP of the
+vector path and is up to five times slower.
 
 `tonemap.Info()` reports what the plugin chose, which is worth including in
 a bug report:
@@ -354,7 +445,9 @@ stable interface, and may change between releases.
   The report states this weakness itself; it is not worked around.
 - The curve is static. Dynamic metadata, HDR10+ and Dolby Vision are not read,
   and no scene or frame peak detection is done.
-- PQ input only. HLG needs a different conversion and is not implemented.
+- HLG input is decoded by the display-light conversion of BT.2408-9 Table 9.
+  HLG output, and the table's scene-light conversion for matching an HLG
+  camera against a live SDR feed, are not implemented.
 - BT.709 output only. Of BT.2407 the plugin implements the Annex 5 projection
   and the section 2 hard clip; Annexes 2 and 4, and perceptual gamut mappers
   of other kinds, are not implemented.
@@ -386,11 +479,13 @@ They skip themselves when the DLL is not built.
 The specifications, which are the authority for everything here:
 
 - ITU-R BT.2408: <https://www.itu.int/rec/R-REC-BT.2408/en> (Annex 5, the
-  EETF and the five representations)
+  EETF and the five representations; section 2 and Table 4, the HDR
+  reference white levels)
 - ITU-R BT.2390: <https://www.itu.int/rec/R-REC-BT.2390/en> (the same curve,
   with the reasoning behind it)
 - ITU-R BT.2100: <https://www.itu.int/rec/R-REC-BT.2100/en> (PQ, the
-  primaries, the ICtCp and Y'CbCr matrices)
+  primaries, the ICtCp and Y'CbCr matrices, and Table 5, the HLG reference
+  EOTF)
 - ITU-R BT.2407: <https://www.itu.int/rec/R-REC-BT.2407/en> (gamut
   conversion)
 - ITU-R BT.2087: <https://www.itu.int/rec/R-REC-BT.2087/en> (deriving the

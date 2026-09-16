@@ -18,13 +18,14 @@ resize stages a real chain carries.
 
 | filter | path | scalar ns/px | SIMD ns/px | scalar fps | SIMD fps | speedup |
 |---|---|---|---|---|---|---|
-| BT2390 | ictcp | 192.4 | 48.3 | 12.87 | 48.30 | 3.98x |
-| BT2390 | ycbcr | 183.4 | 48.5 | 13.59 | 48.46 | 3.78x |
-| BT2390 | yrgb | 85.9 | 18.2 | 31.84 | 78.52 | 4.71x |
-| BT2390 | rgb | 230.7 | 52.5 | 12.35 | 46.46 | 4.40x |
-| BT2390 | maxrgb | 85.6 | 18.1 | 31.93 | 78.08 | 4.72x |
-| BT2407 | clip | 1.0 | 0.7 | 88.45 | 88.69 | 1.48x |
-| BT2407 | softclip | 8.2 | 3.9 | 79.70 | 83.30 | 2.10x |
+| BT2390 | ictcp | 158.6 | 48.2 | 13.93 | 47.56 | 3.29x |
+| BT2390 | ycbcr | 154.9 | 48.1 | 14.88 | 47.89 | 3.22x |
+| BT2390 | yrgb | 74.0 | 18.1 | 34.02 | 74.40 | 4.09x |
+| BT2390 | rgb | 192.9 | 52.0 | 13.18 | 46.51 | 3.71x |
+| BT2390 | maxrgb | 72.3 | 17.9 | 33.92 | 74.23 | 4.03x |
+| BT2407 | clip | 1.0 | 0.8 | 83.96 | 83.86 | 1.34x |
+| BT2407 | softclip | 8.5 | 4.1 | 76.42 | 82.88 | 2.06x |
+| HLG | - | 13.9 | 12.9 | 75.04 | 74.97 | 1.07x |
 
 ## End to end
 
@@ -32,7 +33,7 @@ The whole script of section 4.3 over a synthetic 4K PQ source: the
 resize into linear RGBS, both filters, and the resize back out to
 10-bit YUV. This is what the design's target refers to.
 
-- 34.24 frames per second, ictcp and softclip, on 32 threads
+- 34.54 frames per second, ictcp and softclip, on 32 threads
 - Peak working set 7.3 GB, measured in a process
   that ran nothing but this chain
 
@@ -46,9 +47,9 @@ The ictcp kernel built a second time with float lanes and SLEEF's
 float pow, everything else unchanged. It is not a shipped path and
 exists so the choice of double rests on a measurement.
 
-- double lanes: 48.30 fps
-- float lanes: 63.53 fps
-- ratio: 1.32x
+- double lanes: 47.56 fps
+- float lanes: 63.20 fps
+- ratio: 1.33x
 
 Against the float64 oracle the float kernel reaches 2.5e-04
 absolute and 9.9% relative, against frozen gates of 1.2e-07 for
