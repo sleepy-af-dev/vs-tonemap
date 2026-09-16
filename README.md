@@ -37,7 +37,7 @@ see "Building" below. It holds `vs-tonemap.dll` together with the `LICENSE` and
 download can be checked before it is opened:
 
 ```
-sha256sum -c vs-tonemap-v0.1.0.zip.sha256
+sha256sum -c vs-tonemap-v0.2.0.zip.sha256
 ```
 
 Put the DLL in a directory VapourSynth autoloads plugins from, or load it from
@@ -455,7 +455,7 @@ a bug report:
 >>> core.tonemap.Info()
 {'available_targets': ['AVX3_ZEN4', 'AVX3_DL', 'AVX3', 'AVX2', 'SSE4',
  'SSSE3', 'SSE2'], 'double_lanes': 8, 'ictcp_float32_lanes': 0,
- 'target': 'AVX3_ZEN4', 'version': '0.1.0'}
+ 'target': 'AVX3_ZEN4', 'version': '0.2.0'}
 ```
 
 `version` is the release in full, all three components. VapourSynth's own

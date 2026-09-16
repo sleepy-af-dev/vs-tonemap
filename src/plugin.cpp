@@ -24,7 +24,7 @@ using tonemap::Representation;
 // Info() is therefore where a release names itself in full, and Info() is what
 // a bug report quotes.
 constexpr int kVersionMajor = 0;
-constexpr int kVersionMinor = 1;
+constexpr int kVersionMinor = 2;
 constexpr int kVersionPatch = 0;
 
 // VapourSynth renamed the range property to `_Range`, where 1 is full range.
