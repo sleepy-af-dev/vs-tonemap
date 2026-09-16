@@ -6,9 +6,10 @@ two gates and the shared clip plumbing are in vsharness.
 
 import numpy as np
 import pytest
+import vapoursynth as vs
 
 from hlg_ref import hlg, system_gamma
-from vsharness import evaluate, make_clip, run
+from vsharness import core, evaluate, make_clip, run
 
 # What an HLG clip carries once resize has done the matrix and range
 # conversion but left the transfer alone. 18 is ARIB STD-B67.
@@ -211,6 +212,49 @@ def test_the_extended_gamma_formula_is_used_outside_the_production_range(plugin)
         )
     )
     assert float(got[0, 0]) == pytest.approx(559.3574, rel=1e-5)
+
+
+def test_the_documented_chain_runs_on_a_multi_row_frame(plugin):
+    """The row loop, the stride arithmetic, and the resize handover, together.
+
+    Every other test in this module builds a 1-row clip through make_clip, so
+    hlgGetFrame's row loop and its stride arithmetic never run. No committed
+    test runs the resize stage the README documents either: asking for
+    transfer_s="std-b67" on both sides so zimg converts only the matrix and
+    range and hands the HLG signal over untouched. This closes both gaps at
+    once with a 64x64 frame carrying patch 75 of the patch ladder (code 720),
+    the same real-footage anchor test_patch_ladder checks on a single row.
+    """
+    code10 = 720
+    src = core.std.BlankClip(
+        format=vs.YUV420P10, width=64, height=64, length=1, color=[code10, 512, 512]
+    )
+    src = core.std.SetFrameProps(src, _Matrix=9, _Transfer=18, _Primaries=9, _Range=0)
+    sig = core.resize.Bicubic(
+        src,
+        format=vs.RGBS,
+        transfer_in_s="std-b67",
+        transfer_s="std-b67",
+        primaries_in_s="2020",
+        primaries_s="2020",
+    )
+    # The load-bearing claim: resize left the HLG signal untouched rather
+    # than converting it, so the frame HLG receives is still tagged as HLG.
+    assert sig.get_frame(0).props["_Transfer"] == 18
+
+    frame = plugin.HLG(sig, lw=1000.0, nominal_luminance=1.0).get_frame(0)
+    got = np.stack([np.asarray(frame[p]) for p in range(3)], axis=-1).astype(np.float64)
+    assert np.all(np.isfinite(got))
+    assert np.all(got == got[0, 0])  # the row loop and the stride agree everywhere
+
+    signal = (code10 - 64.0) / (940.0 - 64.0)
+    expected = hlg(
+        np.array([[signal, signal, signal]]), lw=1000.0, nominal_luminance=1.0
+    )
+    # Measured discrepancy against the exact-signal oracle is 6.6e-5, from the
+    # 10-bit-to-float and matrix round trip resize performs; 1e-3 leaves a
+    # comfortable margin without hiding a real regression.
+    assert got[0, 0] == pytest.approx(expected[0], abs=1e-3)
 
 
 from vsharness import GATES, error_stats, report_errors, ulp_columns  # noqa: E402
