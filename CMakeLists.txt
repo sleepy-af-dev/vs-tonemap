@@ -51,7 +51,8 @@ FetchContent_Declare(sleef
   GIT_SHALLOW TRUE)
 FetchContent_MakeAvailable(sleef)
 
-add_library(vs-tonemap MODULE src/plugin.cpp src/bt2390.cpp src/bt2407.cpp src/simd.cpp)
+add_library(vs-tonemap MODULE
+  src/plugin.cpp src/bt2390.cpp src/bt2407.cpp src/hlg.cpp src/simd.cpp)
 set_target_properties(vs-tonemap PROPERTIES
   PREFIX ""
   CXX_VISIBILITY_PRESET hidden
