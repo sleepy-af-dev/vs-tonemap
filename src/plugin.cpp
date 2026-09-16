@@ -83,8 +83,12 @@ std::string checkTag(const VSMap* props, const VSAPI* vsapi, const char* key,
            "needs " + what + " (" + std::to_string(expected) + ")";
 }
 
-std::string checkFrameTags(const VSMap* props, const VSAPI* vsapi) {
-    std::string bad = checkTag(props, vsapi, "_Transfer", VSC_TRANSFER_LINEAR, "linear light");
+// `transfer` and `transferName` are the transfer characteristic this caller
+// requires and the words its error message uses. The primaries and range
+// checks are the same for every filter here.
+std::string checkFrameTags(const VSMap* props, const VSAPI* vsapi, int64_t transfer,
+                           const char* transferName) {
+    std::string bad = checkTag(props, vsapi, "_Transfer", transfer, transferName);
     if (!bad.empty()) return bad;
     bad = checkTag(props, vsapi, "_Primaries", VSC_PRIMARIES_BT2020, "BT.2020 primaries");
     if (!bad.empty()) return bad;
@@ -119,7 +123,7 @@ bool readMasteringLuminance(const VSMap* props, const VSAPI* vsapi, const char* 
 
 std::string resolveFrameParams(const FilterData* d, const VSMap* props,
                                const VSAPI* vsapi, FrameParams* out) {
-    std::string bad = checkFrameTags(props, vsapi);
+    std::string bad = checkFrameTags(props, vsapi, VSC_TRANSFER_LINEAR, "linear light");
     if (!bad.empty()) return bad;
 
     // The peak is reported first because it is the one that shapes the curve.
@@ -296,7 +300,8 @@ bool masteringPrimaries(const VSMap* props, const VSAPI* vsapi, Primaries* out) 
 
 std::string resolveGamutParams(const GamutFilterData* d, const VSMap* props,
                                const VSAPI* vsapi, GamutParams* out) {
-    const std::string bad = checkFrameTags(props, vsapi);
+    const std::string bad =
+        checkFrameTags(props, vsapi, VSC_TRANSFER_LINEAR, "linear light");
     if (!bad.empty()) return bad;
 
     out->method = d->method;
