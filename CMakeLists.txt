@@ -13,6 +13,21 @@ endif()
 # and exists only so the decision rests on a number rather than a guess.
 option(TONEMAP_FLOAT32_ICTCP "build the ictcp kernel with float lanes" OFF)
 
+# The option was TONEMAPPER_FLOAT32_ICTCP before the project was renamed. A
+# build directory whose cache still holds the old name silently builds double
+# lanes while claiming float, so refuse rather than ignore it.
+if(DEFINED TONEMAPPER_FLOAT32_ICTCP)
+  message(FATAL_ERROR
+    "TONEMAPPER_FLOAT32_ICTCP is the pre-rename name and is not read. "
+    "Use -DTONEMAP_FLOAT32_ICTCP=${TONEMAPPER_FLOAT32_ICTCP}, and delete the "
+    "stale entry with: cmake -U TONEMAPPER_FLOAT32_ICTCP <build-dir>")
+endif()
+if(TONEMAP_FLOAT32_ICTCP)
+  message(STATUS "ictcp kernel lanes: float")
+else()
+  message(STATUS "ictcp kernel lanes: double")
+endif()
+
 # Link the C and C++ runtimes statically. The plugin is distributed as one DLL
 # that someone drops into an autoload directory, and a dynamic CRT makes that
 # fail on any machine without the Microsoft Visual C++ redistributable, with an
