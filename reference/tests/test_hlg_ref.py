@@ -322,3 +322,29 @@ def test_nominal_luminance_only_rescales():
     at_1 = hlg(grey([0.6]), lw=1000.0, nominal_luminance=1.0)
     at_100 = hlg(grey([0.6]), lw=1000.0, nominal_luminance=100.0)
     assert at_100 == pytest.approx(at_1 / 100.0, rel=1e-12)
+
+
+from bt2390_ref import pq_eotf, pq_inverse_eotf  # noqa: E402
+
+
+def test_pq_and_hlg_encodings_of_the_same_picture_agree_once_decoded():
+    """No double rendering: BT2390 sees the same light whichever encoding sent it.
+
+    Section 0.2 of the design names this as the proof that the OOTF exactly
+    restores the display light a PQ-native picture never left in the first
+    place. Take a set of display luminances, encode once as PQ directly and
+    once as HLG by going back through inverse_ootf and the OETF, decode
+    both, and the recovered light has to agree. Measured worst case over
+    0.01 to 1000 cd/m2, neutral grey, is 1.4e-13 relative: float64 noise from
+    the extra transcendental round trips the HLG side takes and the PQ side
+    does not.
+    """
+    lw = 1000.0
+    luminance = np.geomspace(0.01, lw, 5000)
+    grey_light = np.repeat(luminance[:, None], 3, axis=1)
+
+    pq_decoded = pq_eotf(pq_inverse_eotf(grey_light))
+    hlg_signal = hlg_oetf(inverse_ootf(grey_light, lw=lw))
+    hlg_decoded = hlg(hlg_signal, lw=lw, nominal_luminance=1.0)
+
+    assert hlg_decoded == pytest.approx(pq_decoded, rel=1e-9)
