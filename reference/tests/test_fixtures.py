@@ -129,3 +129,14 @@ def test_a_gamut_input_sits_outside_the_target_volume(archive):
     assert apply_matrix(RGB2020_TO_XYZ, rows)[..., 1].max() > 1.0
     assert np.all(arrays["gm/softclip_bt2020/out"] >= 0.0)
     assert np.all(arrays["gm/softclip_bt2020/out"] <= 1.0)
+
+
+def test_hlg_cases_are_built():
+    from fixtures import HLG_CASES, build
+
+    meta, arrays = build()
+    assert set(meta["hlg"]) == set(HLG_CASES)
+    for name in HLG_CASES:
+        assert arrays[f"hlg/{name}/in"].shape[1] == 3
+        assert arrays[f"hlg/{name}/in"].shape == arrays[f"hlg/{name}/out"].shape
+        assert np.all(np.isfinite(arrays[f"hlg/{name}/out"]))
