@@ -220,14 +220,14 @@ def test_hlg_simd_matches_the_scalar_kernel(plugin, fixtures, target):
     the scalar one. The two paths therefore round differently in float64,
     and often, measured at roughly 3% of the affine lifts and 15% of the
     luminance sums over this fixture set. FMA is not the only source: the
-    vector kernel now calls SLEEF's exp directly (its u10 variant, guaranteed
+    vector kernel now calls SLEEF's exp directly (its u10 variant, documented
     to 1.0 ULP), while the scalar kernel calls std::exp. How far those two
     implementations land from each other is unmeasured here; it adds to the
-    FMA divergence above, on top of it rather than in place of it.
+    FMA divergence above.
 
     Bit-identity survives that only because the arithmetic is float64 and
-    the frame stores float32. One extra or missing rounding moves the
-    result by about 2^-52 relative, some 2^28 times smaller than a float32
+    the frame stores float32. A few ULP of divergence in float64 moves the
+    result by about 2^-51 relative, some 2^27 times smaller than a float32
     ULP, so it cannot change the stored value. This is the same mechanism
     the README describes for ictcp, where a longer matrix chain does make
     the difference visible at one ULP; here the chain is one FMA in the
