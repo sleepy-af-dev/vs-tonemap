@@ -4,6 +4,7 @@
     uv run --project reference python bench/benchmark.py --sweep    every path
     uv run --project reference python bench/benchmark.py --sweep --write
     uv run --project reference python bench/benchmark.py --chain    section 4.3
+    uv run --project reference python bench/benchmark.py --chain --hlg   HLG chain
 
 The filter's own cost is the difference between draining the source and
 draining the source with the filter on it, so the cost of generating the
@@ -180,6 +181,29 @@ def full_chain(core, clip, representation="ictcp"):
     )
 
 
+def hlg_chain(core, clip):
+    """The README's HLG chain: decode, tone map, gamut map, resize back out.
+
+    BT2390 takes no src_max here: HLG writes MasteringDisplayMaxLuminance on
+    its output and BT2390 reads it from there, the handoff the two filters
+    are designed around.
+    """
+    sig = core.resize.Bicubic(
+        clip,
+        format=vs.RGBS,
+        transfer_in_s="std-b67",
+        transfer_s="std-b67",
+        primaries_in_s="2020",
+        primaries_s="2020",
+    )
+    lin = core.tonemap.HLG(sig, nominal_luminance=100)
+    sdr = core.tonemap.BT2390(lin, nominal_luminance=100)
+    sdr = core.tonemap.BT2407(sdr)
+    return core.resize.Bicubic(
+        sdr, format=vs.YUV420P10, matrix_s="709", transfer_s="709", primaries_s="709"
+    )
+
+
 def pq_source(core, length):
     """A 4K PQ YUV clip, which is what a real chain starts from."""
     clip = core.std.BlankClip(
@@ -200,15 +224,38 @@ def pq_source(core, length):
     )
 
 
-def end_to_end(core, frames, threads):
+def hlg_source(core, length):
+    """A 4K HLG YUV clip, with no mastering display metadata.
+
+    That absence is the realistic case: HLG is display-independent by design
+    and most HLG content carries none, unlike pq_source above.
+    """
+    clip = core.std.BlankClip(
+        format=vs.YUV420P10,
+        width=WIDTH,
+        height=HEIGHT,
+        length=length,
+        color=[720, 512, 600],
+    )
+    return core.std.SetFrameProps(
+        clip,
+        _Matrix=9,
+        _Transfer=18,
+        _Primaries=9,
+        _Range=0,
+    )
+
+
+def end_to_end(core, frames, threads, hlg=False):
     """Frames per second for the whole documented script, both resizes included."""
     core.num_threads = threads
-    drain(full_chain(core, pq_source(core, 2)), threads)
-    seconds = drain(full_chain(core, pq_source(core, frames)), threads)
+    chain, source = (hlg_chain, hlg_source) if hlg else (full_chain, pq_source)
+    drain(chain(core, source(core, 2)), threads)
+    seconds = drain(chain(core, source(core, frames)), threads)
     return frames / seconds
 
 
-def chain_in_fresh_process(frames, dll=None):
+def chain_in_fresh_process(frames, dll=None, hlg=False):
     """The end-to-end pass on its own, so the peak working set is the chain's.
 
     Peak working set is a high-water mark for the life of the process, so a
@@ -216,6 +263,8 @@ def chain_in_fresh_process(frames, dll=None):
     own peak rather than the chain's.
     """
     command = [sys.executable, __file__, "--chain", "--frames", str(frames)]
+    if hlg:
+        command += ["--hlg"]
     if dll:
         command += ["--dll", dll]
     done = subprocess.run(command, capture_output=True, text=True, check=True)
@@ -284,7 +333,16 @@ def sweep(core, frame, frames_one, frames_many, threads):
 
 
 def write_results(
-    rows, env, frames_one, frames_many, threads, chain_fps, peak, float32_fps=None
+    rows,
+    env,
+    frames_one,
+    frames_many,
+    threads,
+    chain_fps,
+    peak,
+    hlg_chain_fps,
+    hlg_peak,
+    float32_fps=None,
 ):
     lines = [
         "# Benchmark results",
@@ -335,6 +393,20 @@ def write_results(
             "memory a chain needs scales with the thread count. Lower",
             "core.num_threads or core.max_cache_size to trade throughput for it.",
         ]
+    lines += [
+        "",
+        "The same shape over a synthetic 4K HLG source instead: resize into",
+        "HLG-tagged RGBS, decode, both filters, and the resize back out. The",
+        "source carries no mastering display metadata, so BT2390 reads its",
+        "src_max from what HLG itself writes rather than from the clip.",
+        "",
+        f"- {hlg_chain_fps:.2f} frames per second, ictcp and softclip, on {threads} threads",
+    ]
+    if hlg_peak is not None:
+        lines += [
+            f"- Peak working set {hlg_peak / 1024:.1f} GB, measured in a process",
+            "  that ran nothing but this chain",
+        ]
     if float32_fps is not None:
         double_fps = next(r["simd_fps"] for r in rows if r["path"] == "ictcp")
         lines += [
@@ -384,6 +456,11 @@ def main():
         action="store_true",
         help="only the end-to-end pass, as one JSON line",
     )
+    parser.add_argument(
+        "--hlg",
+        action="store_true",
+        help="with --chain, run the HLG chain instead of the PQ chain",
+    )
     parser.add_argument("--write", action="store_true", help="write bench/results.md")
     parser.add_argument("--dll", default=None, help="load a different build")
     parser.add_argument(
@@ -403,7 +480,7 @@ def main():
     if args.chain:
         # Nothing else runs here, and in particular no synthetic 4K array is
         # built, so the peak working set is the chain's.
-        fps = end_to_end(core, frames_many, threads)
+        fps = end_to_end(core, frames_many, threads, hlg=args.hlg)
         print(json.dumps({"fps": fps, "peak_mb": peak_memory_mb()}))
         return
 
@@ -418,6 +495,7 @@ def main():
         )
         rows = sweep(core, frame, args.frames, frames_many, threads)
         chain = chain_in_fresh_process(args.frames, args.dll)
+        hlg_chain_result = chain_in_fresh_process(args.frames, args.dll, hlg=True)
         print(
             f"\n  section 4.3 end to end, synthetic 4K PQ source: {chain['fps']:.2f} fps"
         )
@@ -425,6 +503,14 @@ def main():
             print(
                 f"  peak working set of that chain alone: "
                 f"{chain['peak_mb'] / 1024:.1f} GB at {threads} threads"
+            )
+        print(
+            f"  HLG chain, synthetic 4K HLG source: {hlg_chain_result['fps']:.2f} fps"
+        )
+        if hlg_chain_result["peak_mb"] is not None:
+            print(
+                f"  peak working set of that chain alone: "
+                f"{hlg_chain_result['peak_mb'] / 1024:.1f} GB at {threads} threads"
             )
         if args.write:
             write_results(
@@ -435,6 +521,8 @@ def main():
                 threads,
                 chain["fps"],
                 chain["peak_mb"],
+                hlg_chain_result["fps"],
+                hlg_chain_result["peak_mb"],
                 args.float32_fps,
             )
         return

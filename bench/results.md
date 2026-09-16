@@ -21,14 +21,14 @@ survive the next run.
 
 | filter | path | scalar ns/px | SIMD ns/px | scalar fps | SIMD fps | speedup |
 |---|---|---|---|---|---|---|
-| BT2390 | ictcp | 158.5 | 48.0 | 13.94 | 47.59 | 3.30x |
-| BT2390 | ycbcr | 153.1 | 48.3 | 14.88 | 48.23 | 3.17x |
-| BT2390 | yrgb | 73.5 | 18.2 | 33.91 | 73.97 | 4.04x |
-| BT2390 | rgb | 194.4 | 52.4 | 13.13 | 46.15 | 3.71x |
-| BT2390 | maxrgb | 72.9 | 18.1 | 33.96 | 74.80 | 4.04x |
-| BT2407 | clip | 1.0 | 0.7 | 84.83 | 85.02 | 1.47x |
-| BT2407 | softclip | 8.4 | 4.1 | 76.07 | 81.90 | 2.04x |
-| HLG | - | 13.6 | 6.8 | 76.76 | 79.91 | 1.99x |
+| BT2390 | ictcp | 159.6 | 48.2 | 13.86 | 46.74 | 3.31x |
+| BT2390 | ycbcr | 153.7 | 48.4 | 14.82 | 46.18 | 3.18x |
+| BT2390 | yrgb | 73.5 | 18.1 | 33.99 | 74.16 | 4.07x |
+| BT2390 | rgb | 192.0 | 52.0 | 13.24 | 45.47 | 3.69x |
+| BT2390 | maxrgb | 71.8 | 18.0 | 34.13 | 77.72 | 4.00x |
+| BT2407 | clip | 1.0 | 0.7 | 87.51 | 87.49 | 1.39x |
+| BT2407 | softclip | 8.2 | 4.0 | 76.53 | 81.29 | 2.04x |
+| HLG | - | 13.7 | 6.9 | 74.90 | 78.80 | 2.00x |
 
 ## End to end
 
@@ -36,13 +36,22 @@ The whole script of section 4.3 over a synthetic 4K PQ source: the
 resize into linear RGBS, both filters, and the resize back out to
 10-bit YUV. This is what the design's target refers to.
 
-- 34.38 frames per second, ictcp and softclip, on 32 threads
-- Peak working set 7.4 GB, measured in a process
+- 34.22 frames per second, ictcp and softclip, on 32 threads
+- Peak working set 7.3 GB, measured in a process
   that ran nothing but this chain
 
 A 4K RGBS frame is 100 MB and the model is frame-parallel, so the
 memory a chain needs scales with the thread count. Lower
 core.num_threads or core.max_cache_size to trade throughput for it.
+
+The same shape over a synthetic 4K HLG source instead: resize into
+HLG-tagged RGBS, decode, both filters, and the resize back out. The
+source carries no mastering display metadata, so BT2390 reads its
+src_max from what HLG itself writes rather than from the clip.
+
+- 29.84 frames per second, ictcp and softclip, on 32 threads
+- Peak working set 7.4 GB, measured in a process
+  that ran nothing but this chain
 
 ## What the precision costs
 
@@ -50,9 +59,9 @@ The ictcp kernel built a second time with float lanes and SLEEF's
 float pow, everything else unchanged. It is not a shipped path and
 exists so the choice of double rests on a measurement.
 
-- double lanes: 47.59 fps
+- double lanes: 46.74 fps
 - float lanes: 63.20 fps
-- ratio: 1.33x
+- ratio: 1.35x
 
 The double-lane figure is this sweep's own ictcp row; the float-lane
 figure is from a separate --dll run of the float32 build, so the two
