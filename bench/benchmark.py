@@ -20,12 +20,14 @@ every pass, because VapourSynth caches frames per node and draining the same
 node twice measures the cache; that first reported a 4K filter at 3675 fps.
 And a run needs at least as many frames as threads, because the model is
 frame-parallel and a short run cannot occupy the machine. And the chain
-figures measured right after a --sweep can read low, because the sweep's own
-workload leaves the machine in a state the next measurement inherits; the
-script now pauses before each chain measurement to let it settle. A PQ
-figure reading below the HLG figure is the sign it didn't: the HLG chain
-runs the same two filters plus a decode stage, so it always does more work
-and cannot read faster.
+figures are the best of three timings, because the chain's output is
+deterministic while its wall time is not: interference from the rest of the
+machine can only ever make a reading slower, never faster, so the maximum of
+a few readings is the estimator closest to the machine's real capability. A
+wide spread across the three, or a PQ reading below the HLG one, is the sign
+that interference caught every attempt rather than just the discarded ones:
+the HLG chain runs the same two filters plus a decode stage, so it can never
+legitimately read faster.
 """
 
 import argparse
@@ -253,22 +255,19 @@ def hlg_source(core, length):
 
 
 def end_to_end(core, frames, threads, hlg=False):
-    """Frames per second for the whole documented script, both resizes included."""
+    """Frames per second for the whole documented script, both resizes included.
+
+    Timed three times and every reading returned. The chain's output is
+    deterministic, so interference from the rest of the machine can only
+    ever make a reading slower, never faster; the caller keeps the maximum
+    as the estimator closest to the machine's real capability.
+    """
     core.num_threads = threads
     chain, source = (hlg_chain, hlg_source) if hlg else (full_chain, pq_source)
     drain(chain(core, source(core, 2)), threads)
-    seconds = drain(chain(core, source(core, frames)), threads)
-    return frames / seconds
-
-
-# A --sweep run measured PQ at 27.67 fps and HLG at 29.30 fps immediately
-# afterward, against isolated-run ranges of 34.2-34.7 and 29.7-30.6 for the
-# two chains; HLG reading faster than PQ is impossible, since the HLG chain
-# does strictly more work. A 45-second pause before the chain measurement
-# restored both figures to their isolated ranges in that same testing. That
-# is one observation, not a derived constant, so treat 45 as a heuristic and
-# revisit it if it stops working.
-CHAIN_SETTLE_SECONDS = 45
+    return [
+        frames / drain(chain(core, source(core, frames)), threads) for _ in range(3)
+    ]
 
 
 def chain_in_fresh_process(frames, dll=None, hlg=False):
@@ -278,7 +277,6 @@ def chain_in_fresh_process(frames, dll=None, hlg=False):
     sweep that has already built 4K arrays and run every path would report its
     own peak rather than the chain's.
     """
-    time.sleep(CHAIN_SETTLE_SECONDS)
     command = [sys.executable, __file__, "--chain", "--frames", str(frames)]
     if hlg:
         command += ["--hlg"]
@@ -497,8 +495,13 @@ def main():
     if args.chain:
         # Nothing else runs here, and in particular no synthetic 4K array is
         # built, so the peak working set is the chain's.
-        fps = end_to_end(core, frames_many, threads, hlg=args.hlg)
-        print(json.dumps({"fps": fps, "peak_mb": peak_memory_mb()}))
+        readings = end_to_end(core, frames_many, threads, hlg=args.hlg)
+        result = {
+            "fps": max(readings),
+            "readings": readings,
+            "peak_mb": peak_memory_mb(),
+        }
+        print(json.dumps(result))
         return
 
     frame = synthetic_frame()
@@ -513,16 +516,20 @@ def main():
         rows = sweep(core, frame, args.frames, frames_many, threads)
         chain = chain_in_fresh_process(args.frames, args.dll)
         hlg_chain_result = chain_in_fresh_process(args.frames, args.dll, hlg=True)
+        chain_readings = " / ".join(f"{r:.2f}" for r in chain["readings"])
         print(
-            f"\n  section 4.3 end to end, synthetic 4K PQ source: {chain['fps']:.2f} fps"
+            f"\n  section 4.3 end to end, synthetic 4K PQ source: "
+            f"{chain_readings} fps, best {chain['fps']:.2f}"
         )
         if chain["peak_mb"] is not None:
             print(
                 f"  peak working set of that chain alone: "
                 f"{chain['peak_mb'] / 1024:.1f} GB at {threads} threads"
             )
+        hlg_readings = " / ".join(f"{r:.2f}" for r in hlg_chain_result["readings"])
         print(
-            f"  HLG chain, synthetic 4K HLG source: {hlg_chain_result['fps']:.2f} fps"
+            f"  HLG chain, synthetic 4K HLG source: "
+            f"{hlg_readings} fps, best {hlg_chain_result['fps']:.2f}"
         )
         if hlg_chain_result["peak_mb"] is not None:
             print(
