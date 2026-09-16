@@ -13,11 +13,11 @@ filters:
   gamut projection of ITU-R BT.2407 Annex 5 or with the hard clip of its
   section 2.
 
-The maths follows the ITU text as written. Every pixel is computed in float64
-and stored as float32, and the speed comes from explicit SIMD rather than from
-approximating the equations. A float64 reference implementation of the same
-equations, together with the test suite that compares the two, is in
-`reference/`.
+The maths follows the ITU text as written; no equation is approximated to
+make it faster. Every pixel is computed in float64 and stored as float32,
+and the speed comes from explicit SIMD. A float64 reference implementation
+of the same equations, together with the test suite that compares the two,
+is in `reference/`.
 
 ## Requirements
 
@@ -218,8 +218,9 @@ master).
 
 ### Representations
 
-Annex 5 lists five ways to drive the curve, and the plugin implements all of
-them without a strength knob, because the formulas are the point.
+Annex 5 lists five ways to drive the curve, and the plugin implements all
+five. None of them takes a strength parameter; the annex's formulas decide
+the result.
 
 | value | Annex 5 option | what goes through the curve |
 |---|---|---|
@@ -232,9 +233,9 @@ them without a strength knob, because the formulas are the point.
 `ictcp` is the default: it compresses the intensity axis of the space BT.2100
 defines for exactly that separation, and scales the two chroma axes to follow.
 `yrgb` and `maxrgb` run about 2.6 times faster, 18 ns per pixel against 48,
-because one value goes through PQ rather than three. `rgb` desaturates bright colours by
-construction, since each channel is compressed on its own and the largest one
-is compressed most.
+because one value goes through PQ rather than three. `rgb` desaturates bright
+colours by construction, since each channel is compressed on its own and the
+largest one is compressed most.
 
 ### Output
 
@@ -336,8 +337,9 @@ The mastering primaries and white point properties are removed, and
 
 ## Behaviour at the edges
 
-These are the plugin's choices where the specifications stop short. They are
-listed so that nothing here is a surprise.
+These are the plugin's choices where the specifications stop short. The
+specifications do not say what to expect in these cases, so each choice is
+written down here.
 
 - Input above the mastering peak is treated as the peak, and input below the
   mastering black as black. Annex 5 defines the curve on [0, 1] only, and the
@@ -521,8 +523,8 @@ The specifications, which are the authority for everything here:
 - ITU-R BT.2087: <https://www.itu.int/rec/R-REC-BT.2087/en> (deriving the
   matrices from primaries)
 
-Two independent implementations were used as numeric second opinions while
-building this, by comparing outputs:
+Two independent implementations were used as numeric second opinions during
+development, by comparing outputs against them:
 
 - hdr-toys: <https://github.com/natural-harmonia-gropius/hdr-toys>
 - libplacebo: <https://code.videolan.org/videolan/libplacebo>
