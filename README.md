@@ -88,11 +88,15 @@ sdr = core.tonemap.BT2407(sdr)
 
 ### Units
 
-Every luminance is in cd/m2. `nominal_luminance` says how many cd/m2 the value
-1.0 in the input stands for, and carries the same meaning as the `resize`
-parameter of the same name, so the two lines can carry the same number. The
-output is scaled so that `dst_max` becomes 1.0, which is what the SDR transfer
-function on the way out expects.
+Every luminance is in cd/m2. `nominal_luminance` says how many cd/m2 the
+value 1.0 stands for on the linear-light side of the filter that takes it:
+the input for `BT2390`, so the same number can go on both that argument and
+the `resize` parameter of the same name, and the output for `HLG`, since
+`HLG`'s input is the HLG signal itself, not light. `BT2407` takes no
+`nominal_luminance`; the linear light it reads and writes carries whatever
+scale came before it, `BT2390`'s `dst_max` in the documented chain. `BT2390`
+scales its own output so that `dst_max` becomes 1.0, which is what the SDR
+transfer function on the way out expects.
 
 ### Frame properties
 
@@ -124,18 +128,24 @@ HLG(clip clip, [float lw, float lb, float nominal_luminance=100.0,
 | `simd` | 1 | 0 runs the scalar reference instead |
 
 `lw` and `lb` are read from the frame properties when they are not given, the
-same as `src_min` and `src_max` on `BT2390`. Unlike those, they default
+same as `src_max` and `src_min` on `BT2390`. Unlike those, they default
 rather than error when neither the argument nor a usable property is there:
 HLG is display-independent by design and most HLG content carries no
 mastering metadata at all. 1000 cd/m2, the reference display both BT.2100
 and BT.2408 are written around, is the default `lw`; 0 is the default `lb`.
 
 It is an error if `lw` is not a positive, finite luminance, or if `lb` is
-negative, non-finite, or at or above `lw`. Every check whose inputs are all
-arguments runs when the filter is created, so a bad parameter fails at
-script evaluation; a check that needs a value from the properties runs on
-the first frame, and its message names the property the value came from.
-The split matches what `BT2390` uses.
+negative, non-finite, or at or above `lw`. `lw` is also capped at 10000
+cd/m2, since the filter reuses the same luminance check `BT2390` does and
+that bound is the PQ peak; Table 5 does not itself imply a ceiling, so a
+mastering peak above 10000 fails with "lw must be a luminance from 0 to
+10000 cd/m2" rather than with anything about HLG. The cap is defensible all
+the same, since a display above the PQ peak would produce a frame `BT2390`
+could not accept. Every check whose inputs are all arguments runs when the
+filter is created, so a bad parameter fails at script evaluation; a check
+that needs a value from the properties runs on the first frame, and its
+message names the property the value came from. The split matches what
+`BT2390` uses.
 
 Do not ask `resize` to convert HLG to linear light. zimg applies the
 transfer function to each channel on its own, which is the legacy
@@ -325,13 +335,21 @@ listed so that nothing here is a surprise.
   negative linear light is possible and is not implemented.
 - NaN and infinite samples are not supported input. The output for such a
   pixel is unspecified and neither the filter nor the reference checks for
-  them, because a check per sample would cost every valid pixel. On a NaN
-  sample the scalar and vector kernels of `HLG` disagree: the scalar clamp
-  is a pair of comparisons, both false for NaN, so the NaN passes through,
-  while the vector clamp is `Min`/`Max`, which on x86 return the second
-  operand for a NaN input and so yield 0. Both stay within "unspecified" as
-  stated above; it is written down because "the two paths are bit-identical"
-  is otherwise true everywhere else.
+  them, because a check per sample would cost every valid pixel. Measured on
+  the pixel `[NaN, 0.5, 0.5]` at `lw=1000, nominal_luminance=1`: the scalar
+  kernel of `HLG` gives `[0, 0, 0]` and the vector kernel gives
+  `[0, 47.699226, 47.699226]`. Neither path produces NaN, and the two
+  disagree on more than the NaN channel. The scalar clamp is a pair of
+  comparisons, both false for NaN, so the NaN reaches the luminance sum,
+  which comes out NaN too; the black guard, `!(ys > 0)`, is the NaN-safe
+  spelling of that test, so it fires and the whole pixel goes black. The
+  vector clamp is `Min`/`Max`, which on x86 return the second operand when
+  either input is NaN, so only the NaN lane flushes to 0 before the
+  luminance sum runs; the other two channels then render from a luminance
+  computed as if that channel were 0, which is why they come out at 47.70
+  rather than the 50.70 an unpolluted `[0.5, 0.5, 0.5]` pixel gives. Both
+  stay within "unspecified" as stated above; it is written down because "the
+  two paths are bit-identical" is otherwise true everywhere else.
 - With `dst_min` above `src_min` the black lift of step 4 raises the whole
   curve, including its top. The output then exceeds `dst_max` by a factor of
   b(1 - maxLum)^4, for instance 0.39% for a 1000 cd/m2 master, a 1 cd/m2
