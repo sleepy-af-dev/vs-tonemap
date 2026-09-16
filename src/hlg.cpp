@@ -26,7 +26,8 @@ std::string makeHlgParams(double lw, double lb, double nominal, const char* lwNa
         return std::string(lwName) + " must be a positive luminance in cd/m2";
     }
     if (lb >= lw) {
-        return std::string(lbName) + " must be below " + lwName;
+        return std::string(lbName) + " (" + describe(lb) + ") must be below " + lwName +
+               " (" + describe(lw) + ")";
     }
     if (!std::isfinite(nominal) || nominal <= 0.0) {
         return "nominal_luminance must be a positive number of cd/m2";

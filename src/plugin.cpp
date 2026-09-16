@@ -382,7 +382,12 @@ void VS_CC hlgCreate(const VSMap* in, VSMap* out, void*, VSCore* core,
 
     // Every check whose inputs are all arguments runs here, so the script
     // fails at evaluation rather than on the first frame. The checks that
-    // need a property-derived value wait for resolveHlgParams.
+    // need a property-derived value wait for resolveHlgParams. When lw is
+    // not given, this presumes it will resolve to 1000 and checks lb against
+    // that guess rather than against whatever MasteringDisplayMaxLuminance
+    // turns out to hold, so an lb that is fine against the real property can
+    // still be rejected here. Only reachable with an lb above 1000 cd/m2,
+    // which is not a real display black.
     HlgParams unused{};
     const std::string bad = tonemap::makeHlgParams(
         d->haveLw ? d->lw : 1000.0, d->haveLb ? d->lb : 0.0, d->nominal, "lw", "lb",
