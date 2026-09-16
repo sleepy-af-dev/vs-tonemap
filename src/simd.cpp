@@ -60,6 +60,16 @@ HWY_INLINE hn::Vec512<double> SleefPow(hn::Vec512<double> x, hn::Vec512<double> 
 HWY_INLINE hn::Vec512<float> SleefPow(hn::Vec512<float> x, hn::Vec512<float> y) {
     return hn::Vec512<float>{Sleef_powf16_u10avx512f(x.raw, y.raw)};
 }
+#ifndef __AVX512F__
+extern "C" __m512d Sleef_expd8_u10avx512f(__m512d);
+extern "C" __m512 Sleef_expf16_u10avx512f(__m512);
+#endif
+HWY_INLINE hn::Vec512<double> SleefExp(hn::Vec512<double> x) {
+    return hn::Vec512<double>{Sleef_expd8_u10avx512f(x.raw)};
+}
+HWY_INLINE hn::Vec512<float> SleefExp(hn::Vec512<float> x) {
+    return hn::Vec512<float>{Sleef_expf16_u10avx512f(x.raw)};
+}
 #elif HWY_TARGET == HWY_AVX2
 #define TONEMAP_HAVE_SLEEF 1
 #ifndef __AVX__
@@ -72,6 +82,16 @@ HWY_INLINE hn::Vec256<double> SleefPow(hn::Vec256<double> x, hn::Vec256<double> 
 HWY_INLINE hn::Vec256<float> SleefPow(hn::Vec256<float> x, hn::Vec256<float> y) {
     return hn::Vec256<float>{Sleef_powf8_u10avx2(x.raw, y.raw)};
 }
+#ifndef __AVX__
+extern "C" __m256d Sleef_expd4_u10avx2(__m256d);
+extern "C" __m256 Sleef_expf8_u10avx2(__m256);
+#endif
+HWY_INLINE hn::Vec256<double> SleefExp(hn::Vec256<double> x) {
+    return hn::Vec256<double>{Sleef_expd4_u10avx2(x.raw)};
+}
+HWY_INLINE hn::Vec256<float> SleefExp(hn::Vec256<float> x) {
+    return hn::Vec256<float>{Sleef_expf8_u10avx2(x.raw)};
+}
 #elif HWY_TARGET == HWY_SSE4
 #define TONEMAP_HAVE_SLEEF 1
 HWY_INLINE hn::Vec128<double> SleefPow(hn::Vec128<double> x, hn::Vec128<double> y) {
@@ -80,6 +100,12 @@ HWY_INLINE hn::Vec128<double> SleefPow(hn::Vec128<double> x, hn::Vec128<double> 
 HWY_INLINE hn::Vec128<float> SleefPow(hn::Vec128<float> x, hn::Vec128<float> y) {
     return hn::Vec128<float>{Sleef_powf4_u10sse4(x.raw, y.raw)};
 }
+HWY_INLINE hn::Vec128<double> SleefExp(hn::Vec128<double> x) {
+    return hn::Vec128<double>{Sleef_expd2_u10sse4(x.raw)};
+}
+HWY_INLINE hn::Vec128<float> SleefExp(hn::Vec128<float> x) {
+    return hn::Vec128<float>{Sleef_expf4_u10sse4(x.raw)};
+}
 #elif HWY_TARGET == HWY_SSE2 || HWY_TARGET == HWY_SSSE3
 #define TONEMAP_HAVE_SLEEF 1
 HWY_INLINE hn::Vec128<double> SleefPow(hn::Vec128<double> x, hn::Vec128<double> y) {
@@ -87,6 +113,12 @@ HWY_INLINE hn::Vec128<double> SleefPow(hn::Vec128<double> x, hn::Vec128<double> 
 }
 HWY_INLINE hn::Vec128<float> SleefPow(hn::Vec128<float> x, hn::Vec128<float> y) {
     return hn::Vec128<float>{Sleef_powf4_u10sse2(x.raw, y.raw)};
+}
+HWY_INLINE hn::Vec128<double> SleefExp(hn::Vec128<double> x) {
+    return hn::Vec128<double>{Sleef_expd2_u10sse2(x.raw)};
+}
+HWY_INLINE hn::Vec128<float> SleefExp(hn::Vec128<float> x) {
+    return hn::Vec128<float>{Sleef_expf4_u10sse2(x.raw)};
 }
 #endif
 
@@ -103,6 +135,17 @@ HWY_INLINE V PowPerLane(D d, V x, V y) {
     return hn::Load(d, bx);
 }
 
+// Every target SLEEF does not cover here, which on this release's only
+// platform means the emulated ones. Correct, not fast.
+template <class D, class V>
+HWY_INLINE V ExpPerLane(D d, V x) {
+    using T = hn::TFromD<D>;
+    HWY_ALIGN T bx[HWY_MAX_BYTES / sizeof(T)];
+    hn::Store(x, d, bx);
+    for (size_t i = 0; i < hn::Lanes(d); ++i) bx[i] = std::exp(bx[i]);
+    return hn::Load(d, bx);
+}
+
 template <class D, class V>
 HWY_INLINE V Pow(D d, V x, V y) {
 #ifdef TONEMAP_HAVE_SLEEF
@@ -110,6 +153,16 @@ HWY_INLINE V Pow(D d, V x, V y) {
     return SleefPow(x, y);
 #else
     return PowPerLane(d, x, y);
+#endif
+}
+
+template <class D, class V>
+HWY_INLINE V Exp(D d, V x) {
+#ifdef TONEMAP_HAVE_SLEEF
+    (void)d;
+    return SleefExp(x);
+#else
+    return ExpPerLane(d, x);
 #endif
 }
 
@@ -255,15 +308,6 @@ HWY_INLINE void StoreFloats(D d, V v, float* p, size_t count) {
 }
 
 // --- HLG, BT.2100-3 Table 5 ------------------------------------------------
-
-// exp as pow(e, x). SLEEF's exp entry points would need the same per-target
-// declaration block pow already has, for one call site.
-// ponytail: exp via pow; declare Sleef_expd*_u10 if this ever measures hot.
-template <class D, class V>
-HWY_INLINE V Exp(D d, V x) {
-    using T = hn::TFromD<D>;
-    return Pow(d, hn::Set(d, static_cast<T>(2.718281828459045235360287)), x);
-}
 
 // Note 5a. The clamp to [0, 1] is the domain HLG defines, and it carries the
 // max(0, .) that Table 5's EOTF applies to the lifted signal.
