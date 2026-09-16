@@ -423,7 +423,7 @@ encoder, NVENC or a fast software preset, it becomes the limit.
 
 VapourSynth runs frames in parallel and a 4K RGBS frame is 100 MB, so the
 memory a chain needs scales with the thread count. The chain above peaked at
-7.3 GB with 32 threads. Lower `core.num_threads` or `core.max_cache_size` to
+7.4 GB with 32 threads. Lower `core.num_threads` or `core.max_cache_size` to
 trade throughput for memory.
 
 ## Diagnostics
